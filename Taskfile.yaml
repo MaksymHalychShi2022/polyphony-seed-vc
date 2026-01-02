@@ -1,0 +1,7 @@
+version: "3"
+
+dotenv: [".env"]
+
+tasks:
+  demo:
+    - python -m demo.app
