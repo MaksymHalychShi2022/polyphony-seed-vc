@@ -240,7 +240,9 @@ def load_models(args):
     }
     from seed_vc.modules.audio import mel_spectrogram
 
-    to_mel = lambda x: mel_spectrogram(x, **mel_fn_args)
+    def to_mel(x):
+        return mel_spectrogram(x, **mel_fn_args)
+
     # f0 extractor
     from seed_vc.modules.rmvpe import RMVPE
 
@@ -411,9 +413,9 @@ def voice_conversion(
             S_ori, ylens=target2_lengths, n_quantizers=3, f0=F0_ori
         )
     )
-    interpolated_shifted_f0_alt = torch.nn.functional.interpolate(
-        shifted_f0_alt.unsqueeze(1), size=cond.size(1), mode="nearest"
-    ).squeeze(1)
+    # interpolated_shifted_f0_alt = torch.nn.functional.interpolate(
+    #     shifted_f0_alt.unsqueeze(1), size=cond.size(1), mode="nearest"
+    # ).squeeze(1)
     max_source_window = max_context_window - mel2.size(2)
     # split source condition (cond) into chunks
     processed_frames = 0
@@ -421,9 +423,9 @@ def voice_conversion(
     # generate chunk by chunk and stream the output
     while processed_frames < cond.size(1):
         chunk_cond = cond[:, processed_frames : processed_frames + max_source_window]
-        chunk_f0 = interpolated_shifted_f0_alt[
-            :, processed_frames : processed_frames + max_source_window
-        ]
+        # chunk_f0 = interpolated_shifted_f0_alt[
+        #     :, processed_frames : processed_frames + max_source_window
+        # ]
         is_last_chunk = processed_frames + max_source_window >= cond.size(1)
         cat_condition = torch.cat([prompt_condition, chunk_cond], dim=1)
         with torch.autocast(
@@ -577,47 +579,20 @@ def main(args):
         ),
     ]
 
-    # examples = [
-    #     [
-    #         "examples/source/yae_0.wav",
-    #         "examples/reference/dingzhen_0.wav",
-    #         25,
-    #         1.0,
-    #         0.7,
-    #         True,
-    #         0,
-    #     ],
-    #     [
-    #         "examples/source/jay_0.wav",
-    #         "examples/reference/azuma_0.wav",
-    #         25,
-    #         1.0,
-    #         0.7,
-    #         True,
-    #         0,
-    #     ],
-    #     [
-    #         "examples/source/Wiz Khalifa,Charlie Puth - See You Again [vocals]_[cut_28sec].wav",
-    #         "examples/reference/teio_0.wav",
-    #         50,
-    #         1.0,
-    #         0.7,
-    #         False,
-    #         0,
-    #     ],
-    #     [
-    #         "examples/source/TECHNOPOLIS - 2085 [vocals]_[cut_14sec].wav",
-    #         "examples/reference/trump_0.wav",
-    #         50,
-    #         1.0,
-    #         0.7,
-    #         False,
-    #         -12,
-    #     ],
-    # ]
+    examples = [
+        [
+            "demo/examples/BMI_UK16100205_MIC06.mp3",
+            "demo/examples/BMI_UK16100205_mix.mp3",
+            50,
+            1.0,
+            0.7,
+            True,
+            0,
+        ]
+    ]
 
     outputs = [
-        # gr.Audio(label="Stream Output Audio", streaming=True, format="mp3"),
+        gr.Audio(label="Stream Output Audio", streaming=True, format="mp3"),
         gr.Audio(label="Full Output Audio", streaming=False, format="wav"),
     ]
 
@@ -627,8 +602,8 @@ def main(args):
         inputs=inputs,
         outputs=outputs,
         title="Seed Voice Conversion",
-        # examples=examples,
-        # cache_examples=False,
+        examples=examples,
+        cache_examples=False,
     ).launch(
         share=args.share,
     )
