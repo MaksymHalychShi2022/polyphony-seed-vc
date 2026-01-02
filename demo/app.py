@@ -7,7 +7,6 @@ import numpy as np
 import torch
 import torchaudio
 import yaml
-from pydub import AudioSegment
 
 from seed_vc.modules.commons import (
     build_model,
@@ -279,7 +278,6 @@ def crossfade(chunk1, chunk2, overlap):
 # max_context_window = sr // hop_length * 30
 # overlap_frame_len = 16
 # overlap_wave_len = overlap_frame_len * hop_length
-bitrate = "320k"
 
 model_f0, semantic_fn, vocoder_fn, campplus_model, to_mel_f0, mel_fn_args = (
     None,
@@ -420,7 +418,8 @@ def voice_conversion(
     # split source condition (cond) into chunks
     processed_frames = 0
     generated_wave_chunks = []
-    # generate chunk by chunk and stream the output
+    previous_chunk = None
+    # generate chunk by chunk
     while processed_frames < cond.size(1):
         chunk_cond = cond[:, processed_frames : processed_frames + max_source_window]
         # chunk_f0 = interpolated_shifted_f0_alt[
@@ -447,55 +446,17 @@ def voice_conversion(
             vc_wave = vc_wave.unsqueeze(0)
         if processed_frames == 0:
             if is_last_chunk:
-                output_wave = vc_wave[0].cpu().numpy()
-                generated_wave_chunks.append(output_wave)
-                output_wave = (output_wave * 32768.0).astype(np.int16)
-                mp3_bytes = (
-                    AudioSegment(
-                        output_wave.tobytes(),
-                        frame_rate=sr,
-                        sample_width=output_wave.dtype.itemsize,
-                        channels=1,
-                    )
-                    .export(format="mp3", bitrate=bitrate)
-                    .read()
-                )
-                yield mp3_bytes, (sr, np.concatenate(generated_wave_chunks))
+                generated_wave_chunks.append(vc_wave[0].cpu().numpy())
                 break
-            output_wave = vc_wave[0, :-overlap_wave_len].cpu().numpy()
-            generated_wave_chunks.append(output_wave)
+            generated_wave_chunks.append(vc_wave[0, :-overlap_wave_len].cpu().numpy())
             previous_chunk = vc_wave[0, -overlap_wave_len:]
             processed_frames += vc_target.size(2) - overlap_frame_len
-            output_wave = (output_wave * 32768.0).astype(np.int16)
-            mp3_bytes = (
-                AudioSegment(
-                    output_wave.tobytes(),
-                    frame_rate=sr,
-                    sample_width=output_wave.dtype.itemsize,
-                    channels=1,
-                )
-                .export(format="mp3", bitrate=bitrate)
-                .read()
-            )
-            yield mp3_bytes, None
         elif is_last_chunk:
             output_wave = crossfade(
                 previous_chunk.cpu().numpy(), vc_wave[0].cpu().numpy(), overlap_wave_len
             )
             generated_wave_chunks.append(output_wave)
             processed_frames += vc_target.size(2) - overlap_frame_len
-            output_wave = (output_wave * 32768.0).astype(np.int16)
-            mp3_bytes = (
-                AudioSegment(
-                    output_wave.tobytes(),
-                    frame_rate=sr,
-                    sample_width=output_wave.dtype.itemsize,
-                    channels=1,
-                )
-                .export(format="mp3", bitrate=bitrate)
-                .read()
-            )
-            yield mp3_bytes, (sr, np.concatenate(generated_wave_chunks))
             break
         else:
             output_wave = crossfade(
@@ -506,18 +467,9 @@ def voice_conversion(
             generated_wave_chunks.append(output_wave)
             previous_chunk = vc_wave[0, -overlap_wave_len:]
             processed_frames += vc_target.size(2) - overlap_frame_len
-            output_wave = (output_wave * 32768.0).astype(np.int16)
-            mp3_bytes = (
-                AudioSegment(
-                    output_wave.tobytes(),
-                    frame_rate=sr,
-                    sample_width=output_wave.dtype.itemsize,
-                    channels=1,
-                )
-                .export(format="mp3", bitrate=bitrate)
-                .read()
-            )
-            yield mp3_bytes, None
+    if not generated_wave_chunks:
+        return sr, np.array([])
+    return sr, np.concatenate(generated_wave_chunks)
 
 
 def main(args):
@@ -537,48 +489,6 @@ def main(args):
     max_context_window = sr // hop_length * 30
     overlap_wave_len = overlap_frame_len * hop_length
     description = "Zero-shot voice conversion with in-context learning"
-    inputs = [
-        gr.Audio(type="filepath", label="Source Audio"),
-        gr.Audio(type="filepath", label="Reference Audio"),
-        gr.Slider(
-            minimum=1,
-            maximum=200,
-            value=10,
-            step=1,
-            label="Diffusion Steps",
-            info="10 by default, 50~100 for best quality",
-        ),
-        gr.Slider(
-            minimum=0.5,
-            maximum=2.0,
-            step=0.1,
-            value=1.0,
-            label="Length Adjust",
-            info="<1.0 for speed-up speech, >1.0 for slow-down speech",
-        ),
-        gr.Slider(
-            minimum=0.0,
-            maximum=1.0,
-            step=0.1,
-            value=0.7,
-            label="Inference CFG Rate",
-            info="has subtle influence",
-        ),
-        gr.Checkbox(
-            label="Auto F0 adjust",
-            value=True,
-            info="Roughly adjust F0 to match target voice. Only works when F0 conditioned model is used.",
-        ),
-        gr.Slider(
-            label="Pitch shift",
-            minimum=-24,
-            maximum=24,
-            step=1,
-            value=0,
-            info="Pitch shift in semitones, only works when F0 conditioned model is used",
-        ),
-    ]
-
     examples = [
         [
             "demo/examples/BMI_UK16100205_MIC06.mp3",
@@ -591,20 +501,85 @@ def main(args):
         ]
     ]
 
-    outputs = [
-        gr.Audio(label="Stream Output Audio", streaming=True, format="mp3"),
-        gr.Audio(label="Full Output Audio", streaming=False, format="wav"),
-    ]
+    with gr.Blocks(title="Seed Voice Conversion") as demo:
+        gr.Markdown(f"# Seed Voice Conversion\n\n{description}")
+        with gr.Row():
+            with gr.Column():
+                source_audio = gr.Audio(type="filepath", label="Source Audio")
+                target_audio = gr.Audio(type="filepath", label="Reference Audio")
+                diffusion_steps = gr.Slider(
+                    minimum=1,
+                    maximum=200,
+                    value=10,
+                    step=1,
+                    label="Diffusion Steps",
+                    info="10 by default, 50~100 for best quality",
+                )
+                length_adjust = gr.Slider(
+                    minimum=0.5,
+                    maximum=2.0,
+                    step=0.1,
+                    value=1.0,
+                    label="Length Adjust",
+                    info="<1.0 for speed-up speech, >1.0 for slow-down speech",
+                )
+                inference_cfg_rate = gr.Slider(
+                    minimum=0.0,
+                    maximum=1.0,
+                    step=0.1,
+                    value=0.7,
+                    label="Inference CFG Rate",
+                    info="has subtle influence",
+                )
+                auto_f0_adjust = gr.Checkbox(
+                    label="Auto F0 adjust",
+                    value=True,
+                    info="Roughly adjust F0 to match target voice. Only works when F0 conditioned model is used.",
+                )
+                pitch_shift = gr.Slider(
+                    label="Pitch shift",
+                    minimum=-24,
+                    maximum=24,
+                    step=1,
+                    value=0,
+                    info="Pitch shift in semitones, only works when F0 conditioned model is used",
+                )
+                convert_button = gr.Button("Convert")
+            with gr.Column():
+                output_audio = gr.Audio(
+                    label="Output Audio", streaming=False, format="wav", type="numpy"
+                )
 
-    gr.Interface(
-        fn=voice_conversion,
-        description=description,
-        inputs=inputs,
-        outputs=outputs,
-        title="Seed Voice Conversion",
-        examples=examples,
-        cache_examples=False,
-    ).launch(
+        convert_button.click(
+            voice_conversion,
+            inputs=[
+                source_audio,
+                target_audio,
+                diffusion_steps,
+                length_adjust,
+                inference_cfg_rate,
+                auto_f0_adjust,
+                pitch_shift,
+            ],
+            outputs=output_audio,
+        )
+        gr.Examples(
+            examples=examples,
+            inputs=[
+                source_audio,
+                target_audio,
+                diffusion_steps,
+                length_adjust,
+                inference_cfg_rate,
+                auto_f0_adjust,
+                pitch_shift,
+            ],
+            outputs=output_audio,
+            fn=voice_conversion,
+            cache_examples=False,
+        )
+
+    demo.launch(
         share=args.share,
     )
 

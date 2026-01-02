@@ -55,5 +55,6 @@ dist/
 # === Project Specific ===
 data/
 checkpoints/
+demo/generated/
 
 TODO
