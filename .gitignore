@@ -56,5 +56,6 @@ dist/
 data/
 checkpoints/
 demo/generated/
+runs/
 
 TODO

@@ -14,8 +14,7 @@ from seed_vc.modules.commons import (
     recursive_munch,
     str2bool,
 )
-
-from .hf_utils import load_custom_model_from_hf
+from seed_vc.utils.hf_utils import load_custom_model_from_hf
 
 # Load model and configuration
 os.environ["HF_HUB_CACHE"] = "./checkpoints/hf_cache"
