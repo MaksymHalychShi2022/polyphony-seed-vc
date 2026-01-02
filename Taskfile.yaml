@@ -4,7 +4,7 @@ dotenv: [".env"]
 
 tasks:
   demo:
-    - python -m demo.app
+    - uv run python -m demo.app
 
   train:
-    - python -m seed_vc.train.train
+    - uv run python -m seed_vc.train.train

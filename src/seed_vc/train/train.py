@@ -289,55 +289,40 @@ class Trainer:
         self.semantic_fn = semantic_fn
 
     def train_one_step(self, batch):
-        waves, mels, wave_lengths, mel_input_length = batch
+        (
+            src_waves,
+            _src_mels,
+            src_wave_lengths,
+            _src_mel_input_length,
+            tgt_waves,
+            tgt_mels,
+            tgt_wave_lengths,
+            tgt_mel_input_length,
+        ) = batch
 
-        B = waves.size(0)
-        target_size = mels.size(2)
-        target = mels
-        target_lengths = mel_input_length
+        B = src_waves.size(0)
+        target_size = tgt_mels.size(2)
+        target = tgt_mels
+        target_lengths = tgt_mel_input_length
 
-        # get speaker embedding
-        if self.sr != 22050:
-            waves_22k = torchaudio.functional.resample(waves, self.sr, 22050)
-            wave_lengths_22k = (wave_lengths.float() * 22050 / self.sr).long()
-        else:
-            waves_22k = waves
-            wave_lengths_22k = wave_lengths
-        se_batch = self.tone_color_converter.extract_se(waves_22k, wave_lengths_22k)
+        src_waves_16k = torchaudio.functional.resample(src_waves, self.sr, 16000)
+        tgt_waves_16k = torchaudio.functional.resample(tgt_waves, self.sr, 16000)
+        # src_wave_lengths_16k = (src_wave_lengths.float() * 16000 / self.sr).long()
+        tgt_wave_lengths_16k = (tgt_wave_lengths.float() * 16000 / self.sr).long()
 
-        ref_se_idx = torch.randint(0, len(self.se_db), (B,))
-        ref_se = self.se_db[ref_se_idx].to(self.device)
-
-        # convert
-        converted_waves_22k = self.tone_color_converter.convert(
-            waves_22k, wave_lengths_22k, se_batch, ref_se
-        ).squeeze(1)
-
-        if self.sr != 22050:
-            converted_waves = torchaudio.functional.resample(
-                converted_waves_22k, 22050, self.sr
-            )
-        else:
-            converted_waves = converted_waves_22k
-
-        waves_16k = torchaudio.functional.resample(waves, self.sr, 16000)
-        wave_lengths_16k = (wave_lengths.float() * 16000 / self.sr).long()
-        converted_waves_16k = torchaudio.functional.resample(
-            converted_waves, self.sr, 16000
-        )
-
-        # extract S_alt (perturbed speech tokens)
-        S_ori = self.semantic_fn(waves_16k)
-        S_alt = self.semantic_fn(converted_waves_16k)
+        # extract semantic tokens for source (content) and target (style)
+        S_ori = self.semantic_fn(src_waves_16k)
+        S_alt = self.semantic_fn(tgt_waves_16k)
 
         if self.f0_condition:
-            F0_ori = self.rmvpe.infer_from_audio_batch(waves_16k)
+            F0_ori = self.rmvpe.infer_from_audio_batch(src_waves_16k)
+            F0_tgt = self.rmvpe.infer_from_audio_batch(tgt_waves_16k)
         else:
-            F0_ori = None
+            F0_ori, F0_tgt = None, None
 
         # interpolate speech token to match acoustic feature length
         alt_cond, _, alt_codes, alt_commitment_loss, alt_codebook_loss = (
-            self.model.length_regulator(S_alt, ylens=target_lengths, f0=F0_ori)
+            self.model.length_regulator(S_alt, ylens=target_lengths, f0=F0_tgt)
         )
         ori_cond, _, ori_codes, ori_commitment_loss, ori_codebook_loss = (
             self.model.length_regulator(S_ori, ylens=target_lengths, f0=F0_ori)
@@ -371,7 +356,7 @@ class Trainer:
         feat_list = []
         for bib in range(B):
             feat = kaldi.fbank(
-                waves_16k[bib : bib + 1, : wave_lengths_16k[bib]],
+                tgt_waves_16k[bib : bib + 1, : tgt_wave_lengths_16k[bib]],
                 num_mel_bins=80,
                 dither=0,
                 sample_frequency=16000,
@@ -491,12 +476,12 @@ if __name__ == "__main__":
         default="configs/presets/config_dit_mel_seed_uvit_whisper_base_f0_44k.yml",
     )
     parser.add_argument("--pretrained-ckpt", type=str, default=None)
-    parser.add_argument("--dataset-dir", type=str, default="data/")
+    parser.add_argument("--dataset-dir", type=str, default="data/dataset.csv")
     parser.add_argument("--run-name", type=str, default="my_run")
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--max-steps", type=int, default=1000)
     parser.add_argument("--max-epochs", type=int, default=1000)
-    parser.add_argument("--save-every", type=int, default=500)
+    parser.add_argument("--save-every", type=int, default=10)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--gpu", type=int, help="Which GPU id to use", default=0)
     args = parser.parse_args()

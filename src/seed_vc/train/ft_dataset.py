@@ -1,8 +1,11 @@
-import torch
+import random
+from pathlib import Path
+import csv
+
 import librosa
 import numpy as np
-import random
-import os
+import torch
+
 from seed_vc.modules.audio import mel_spectrogram
 
 
@@ -26,11 +29,7 @@ class FT_Dataset(torch.utils.data.Dataset):
         batch_size=1,
     ):
         self.data_path = data_path
-        self.data = []
-        for root, _, files in os.walk(data_path):
-            for file in files:
-                if file.endswith((".wav", ".mp3", ".flac", ".ogg", ".m4a", ".opus")):
-                    self.data.append(os.path.join(root, file))
+        self.data = self._build_pairs(data_path)
 
         self.sr = sr
         self.mel_fn_args = {
@@ -52,30 +51,78 @@ class FT_Dataset(torch.utils.data.Dataset):
         while len(self.data) < batch_size:
             self.data += self.data
 
+    def _build_pairs(self, data_path):
+        audio_exts = (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".opus")
+        data_path = Path(data_path)
+
+        if data_path.suffix.lower() != ".csv":
+            raise ValueError(
+                "Only CSV input is supported. Provide a CSV with source,target columns or rows."
+            )
+
+        pairs = []
+        base_dir = data_path.parent
+        with open(data_path, "r", newline="") as f:
+            peek = f.readline()
+            f.seek(0)
+            if "source" in peek and "target" in peek:
+                reader = csv.DictReader(f)
+                rows = [(row.get("source"), row.get("target")) for row in reader]
+            else:
+                reader = csv.reader(f)
+                rows = [tuple(row[:2]) for row in reader if len(row) >= 2]
+        for src_rel, tgt_rel in rows:
+            if src_rel is None or tgt_rel is None:
+                continue
+            src = (base_dir / src_rel).expanduser()
+            tgt = (base_dir / tgt_rel).expanduser()
+            if not src.exists() or not tgt.exists():
+                print(f"Warning: skipping missing pair {src} / {tgt}")
+                continue
+            if (
+                src.suffix.lower() not in audio_exts
+                or tgt.suffix.lower() not in audio_exts
+            ):
+                print(f"Warning: unsupported audio extension in pair {src} / {tgt}")
+                continue
+            pairs.append((src, tgt))
+        if len(pairs) == 0:
+            raise ValueError("CSV provided but no valid (source,target) pairs found.")
+        return pairs
+
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
         idx = idx % len(self.data)
-        wav_path = self.data[idx]
+        src_path, tgt_path = self.data[idx]
         try:
-            speech, orig_sr = librosa.load(wav_path, sr=self.sr)
+            src_speech, src_orig_sr = librosa.load(src_path, sr=self.sr)
+            tgt_speech, tgt_orig_sr = librosa.load(tgt_path, sr=self.sr)
         except Exception as e:
             print(f"Failed to load wav file with error {e}")
             return self.__getitem__(random.randint(0, len(self)))
         if (
-            len(speech) < self.sr * duration_setting["min"]
-            or len(speech) > self.sr * duration_setting["max"]
+            len(src_speech) < self.sr * duration_setting["min"]
+            or len(src_speech) > self.sr * duration_setting["max"]
+            or len(tgt_speech) < self.sr * duration_setting["min"]
+            or len(tgt_speech) > self.sr * duration_setting["max"]
         ):
-            print(f"Audio {wav_path} is too short or too long, skipping")
+            print(
+                f"Audio pair {src_path} / {tgt_path} is too short or too long, skipping"
+            )
             return self.__getitem__(random.randint(0, len(self)))
-        if orig_sr != self.sr:
-            speech = librosa.resample(speech, orig_sr, self.sr)
+        if src_orig_sr != self.sr:
+            src_speech = librosa.resample(src_speech, src_orig_sr, self.sr)
+        if tgt_orig_sr != self.sr:
+            tgt_speech = librosa.resample(tgt_speech, tgt_orig_sr, self.sr)
 
-        wave = torch.from_numpy(speech).float().unsqueeze(0)
-        mel = to_mel_fn(wave, self.mel_fn_args).squeeze(0)
+        src_wave = torch.from_numpy(src_speech).float().unsqueeze(0)
+        tgt_wave = torch.from_numpy(tgt_speech).float().unsqueeze(0)
+        src_mel = to_mel_fn(src_wave, self.mel_fn_args).squeeze(0)
+        tgt_mel = to_mel_fn(tgt_wave, self.mel_fn_args).squeeze(0)
 
-        return wave.squeeze(0), mel
+        return src_wave.squeeze(0), src_mel, tgt_wave.squeeze(0), tgt_mel
 
 
 def build_ft_dataloader(data_path, spect_params, sr, batch_size=1, num_workers=0):
@@ -93,29 +140,49 @@ def build_ft_dataloader(data_path, spect_params, sr, batch_size=1, num_workers=0
 def collate(batch):
     batch_size = len(batch)
 
-    # sort by mel length
-    lengths = [b[1].shape[1] for b in batch]
+    # sort by target mel length
+    lengths = [b[3].shape[1] for b in batch]
     batch_indexes = np.argsort(lengths)[::-1]
     batch = [batch[bid] for bid in batch_indexes]
 
-    nmels = batch[0][1].size(0)
-    max_mel_length = max([b[1].shape[1] for b in batch])
-    max_wave_length = max([b[0].size(0) for b in batch])
+    n_mels = batch[0][1].size(0)
+    max_src_mel_len = max([b[1].shape[1] for b in batch])
+    max_tgt_mel_len = max([b[3].shape[1] for b in batch])
+    max_src_wave_len = max([b[0].size(0) for b in batch])
+    max_tgt_wave_len = max([b[2].size(0) for b in batch])
 
-    mels = torch.zeros((batch_size, nmels, max_mel_length)).float() - 10
-    waves = torch.zeros((batch_size, max_wave_length)).float()
+    src_mels = torch.zeros((batch_size, n_mels, max_src_mel_len)).float() - 10
+    tgt_mels = torch.zeros((batch_size, n_mels, max_tgt_mel_len)).float() - 10
+    src_waves = torch.zeros((batch_size, max_src_wave_len)).float()
+    tgt_waves = torch.zeros((batch_size, max_tgt_wave_len)).float()
 
-    mel_lengths = torch.zeros(batch_size).long()
-    wave_lengths = torch.zeros(batch_size).long()
+    src_mel_lengths = torch.zeros(batch_size).long()
+    tgt_mel_lengths = torch.zeros(batch_size).long()
+    src_wave_lengths = torch.zeros(batch_size).long()
+    tgt_wave_lengths = torch.zeros(batch_size).long()
 
-    for bid, (wave, mel) in enumerate(batch):
-        mel_size = mel.size(1)
-        mels[bid, :, :mel_size] = mel
-        waves[bid, : wave.size(0)] = wave
-        mel_lengths[bid] = mel_size
-        wave_lengths[bid] = wave.size(0)
+    for bid, (src_wave, src_mel, tgt_wave, tgt_mel) in enumerate(batch):
+        src_mel_size = src_mel.size(1)
+        tgt_mel_size = tgt_mel.size(1)
+        src_waves[bid, : src_wave.size(0)] = src_wave
+        tgt_waves[bid, : tgt_wave.size(0)] = tgt_wave
+        src_mels[bid, :, :src_mel_size] = src_mel
+        tgt_mels[bid, :, :tgt_mel_size] = tgt_mel
+        src_mel_lengths[bid] = src_mel_size
+        tgt_mel_lengths[bid] = tgt_mel_size
+        src_wave_lengths[bid] = src_wave.size(0)
+        tgt_wave_lengths[bid] = tgt_wave.size(0)
 
-    return waves, mels, wave_lengths, mel_lengths
+    return (
+        src_waves,
+        src_mels,
+        src_wave_lengths,
+        src_mel_lengths,
+        tgt_waves,
+        tgt_mels,
+        tgt_wave_lengths,
+        tgt_mel_lengths,
+    )
 
 
 if __name__ == "__main__":
