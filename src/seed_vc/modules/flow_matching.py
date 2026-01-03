@@ -172,7 +172,7 @@ class BASECFM(torch.nn.Module, ABC):
                 mu[bib, :, : prompt_lens[bib]] = 0
 
         estimator_out = self.estimator(
-            y, prompt, x_lens, t.squeeze(1).squeeze(1), style, mu, prompt_lens
+            y, prompt, x_lens, t.squeeze(1).squeeze(1), style, mu
         )
         loss = 0
         for bib in range(b):
