@@ -7,7 +7,10 @@ tasks:
     - uv run python -m demo.app
 
   prepare-dataset:
-    - uv run python -m scripts.build_polyphony_pairs --max-songs 10
+    - uv run python -m scripts.build_polyphony_pairs --max-songs 10 --out-dir data/polyphony-project-dataset-tmp
 
   train:
-    - uv run python -m seed_vc.train.train --dataset data/polyphony-project-dataset/pairs.csv
+    - uv run python -m seed_vc.train.train --dataset data/polyphony-project-dataset-tmp/pairs.csv
+
+  tensorboard:
+    - uv run python -m tensorboard.main --logdir runs

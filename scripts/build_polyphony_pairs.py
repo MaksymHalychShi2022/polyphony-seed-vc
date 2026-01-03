@@ -10,7 +10,8 @@ For each multitrack song:
 Example:
     HF_TOKEN=... python scripts/build_polyphony_pairs.py \\
         --repo-id ai-department-lpnu/polyphony-project \\
-        --base-prefix data/tracks/ \\
+        --base-prefix data/ \\
+        --splits train,test \\
         --out-dir data/seed_vc_pairs \\
         --sr 22050 --chunk-seconds 10
 """
@@ -34,13 +35,30 @@ MAX_CHUNK_SECONDS = 30.0
 
 
 def list_song_tracks(
-    repo_id: str, base_prefix: str, token: str | None, exts: set[str]
-) -> dict[str, list[str]]:
-    """Return mapping: song_id -> list[path_in_repo] filtered by prefix/ext."""
+    repo_id: str,
+    base_prefix: str,
+    token: str | None,
+    exts: set[str],
+    splits: list[str],
+) -> list[tuple[str | None, str, list[str]]]:
+    """
+    Return list of (split, song_id, [paths]) filtered by prefix/ext.
+    Handles both legacy layout data/tracks/<song_id>/... and split layout
+    data/<split>/<song_id>/...
+    """
     api = HfApi()
     files = api.list_repo_files(repo_id=repo_id, repo_type="dataset", token=token)
     prefix = base_prefix if base_prefix.endswith("/") else f"{base_prefix}/"
-    songs: dict[str, list[str]] = defaultdict(list)
+    prefix = prefix.rstrip("/") + "/"
+    base_default_split = prefix.strip("/").split("/")[-1].lower()
+    if base_default_split not in {"train", "test"}:
+        base_default_split = None
+
+    normalized_splits = {s.lower() for s in splits}
+    allowed_split = None if "all" in normalized_splits else normalized_splits
+    songs: dict[str | None, dict[str, list[str]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
 
     for path in files:
         if not path.startswith(prefix):
@@ -51,13 +69,39 @@ def list_song_tracks(
         parts = rest.split("/")
         if len(parts) < 2:
             continue  # not a track file
-        song_id = parts[0].strip()
-        if song_id:
-            songs[song_id].append(path)
+        first = parts[0].strip()
+        current_split: str | None = None
 
-    for sid in songs:
-        songs[sid].sort()
-    return dict(songs)
+        if first.lower() in {"train", "test"}:
+            current_split = first.lower()
+            if len(parts) < 3:
+                continue
+            song_id = parts[1].strip()
+        elif first == "tracks":
+            if len(parts) < 3:
+                continue
+            song_id = parts[1].strip()
+        else:
+            song_id = first  # base prefix already pointed into a split or song
+
+        if not song_id:
+            continue
+
+        if current_split is None:
+            current_split = base_default_split
+
+        if allowed_split and current_split and current_split not in allowed_split:
+            continue
+
+        songs[current_split][song_id].append(path)
+
+    song_items: list[tuple[str | None, str, list[str]]] = []
+    for split_key, song_map in songs.items():
+        for sid, paths in song_map.items():
+            song_items.append((split_key, sid, sorted(paths)))
+
+    song_items.sort(key=lambda item: ((item[0] or ""), item[1]))
+    return song_items
 
 
 def load_audio(path: Path, sr: int) -> np.ndarray:
@@ -166,15 +210,16 @@ def is_silent_chunk(
 def process_song(
     song_id: str,
     repo_paths: list[str],
+    split: str | None,
     args: argparse.Namespace,
     token: str | None,
-) -> list[tuple[Path, Path, str, int, int]]:
+) -> list[tuple[Path, Path, str | None, str, int, int]]:
     """
     Download/mix one song.
-    Returns list of (source_rel, target_rel, song_id, num_tracks, chunk_idx).
+    Returns list of (source_rel, target_rel, split, song_id, num_tracks, chunk_idx).
     """
     out_dir: Path = args.out_dir
-    song_dir = out_dir / song_id
+    song_dir = out_dir / song_id if not split else out_dir / split / song_id
 
     if args.skip_existing and song_dir.exists():
         csv_pairs = []
@@ -192,6 +237,7 @@ def process_song(
                         (
                             src.relative_to(out_dir),
                             tgt.relative_to(out_dir),
+                            split,
                             song_id,
                             len(repo_paths),
                             chunk_idx,
@@ -249,6 +295,7 @@ def process_song(
                 (
                     src_path.relative_to(out_dir),
                     mixture_paths[chunk_idx].relative_to(out_dir),
+                    split,
                     song_id,
                     len(repo_paths),
                     chunk_idx,
@@ -270,14 +317,19 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--base-prefix",
-        default="data/tracks/",
-        help="Path prefix inside the HF dataset that holds song folders.",
+        default="data/",
+        help='Path prefix inside the HF dataset that holds song folders (e.g. "data/" or "data/train/").',
     )
     parser.add_argument(
         "--out-dir",
         type=Path,
         default=Path("data/polyphony-project-dataset"),
         help="Where to store chunked WAVs and the pairs.csv file.",
+    )
+    parser.add_argument(
+        "--splits",
+        default="train,test",
+        help='Comma-separated list of splits to process (e.g. "train,test" or "all").',
     )
     parser.add_argument("--sr", type=int, default=22050, help="Target sample rate.")
     parser.add_argument(
@@ -357,6 +409,9 @@ def main() -> None:
     args = parse_args()
     token = args.token or None
     args.out_dir = args.out_dir.resolve()
+    args.splits = [s.strip() for s in args.splits.split(",") if s.strip()]
+    if not args.splits:
+        args.splits = ["train", "test"]
 
     if not (MIN_CHUNK_SECONDS <= args.chunk_seconds <= MAX_CHUNK_SECONDS):
         raise SystemExit("chunk-seconds must be between 1 and 30 seconds.")
@@ -365,29 +420,45 @@ def main() -> None:
     if args.min_chunk_seconds > args.chunk_seconds:
         raise SystemExit("min-chunk-seconds cannot exceed chunk-seconds.")
 
-    songs = list_song_tracks(args.repo_id, args.base_prefix, token, AUDIO_EXTS)
+    songs = list_song_tracks(
+        args.repo_id, args.base_prefix, token, AUDIO_EXTS, args.splits
+    )
     if not songs:
         raise SystemExit("No tracks found; check repo id, token, and base prefix.")
 
-    song_items = list(songs.items())
     if args.max_songs > 0:
-        song_items = song_items[: args.max_songs]
+        split_order: list[str | None] = []
+        grouped: dict[str | None, list[tuple[str | None, str, list[str]]]] = (
+            defaultdict(list)
+        )
+        for item in songs:
+            split = item[0]
+            if split not in grouped:
+                split_order.append(split)
+            grouped[split].append(item)
+        song_items: list[tuple[str | None, str, list[str]]] = []
+        for split in split_order:
+            song_items.extend(grouped[split][: args.max_songs])
+    else:
+        song_items = songs
 
-    pairs: list[tuple[Path, Path, str, int, int]] = []
-    for idx, (song_id, repo_paths) in enumerate(song_items, start=1):
+    pairs: list[tuple[Path, Path, str | None, str, int, int]] = []
+    for idx, (split, song_id, repo_paths) in enumerate(song_items, start=1):
         if len(repo_paths) < args.min_tracks:
             print(
                 f"[{idx}/{len(song_items)}] {song_id}: skipped (<{args.min_tracks} tracks)"
             )
             continue
         try:
-            song_pairs = process_song(song_id, repo_paths, args, token)
+            song_pairs = process_song(song_id, repo_paths, split, args, token)
         except Exception as exc:  # noqa: BLE001
-            print(f"[{idx}/{len(song_items)}] {song_id}: failed ({exc})")
+            label = f"{split}/{song_id}" if split else song_id
+            print(f"[{idx}/{len(song_items)}] {label}: failed ({exc})")
             continue
         pairs.extend(song_pairs)
+        label = f"{split}/{song_id}" if split else song_id
         print(
-            f"[{idx}/{len(song_items)}] {song_id}: "
+            f"[{idx}/{len(song_items)}] {label}: "
             f"{len(repo_paths)} tracks -> {len(song_pairs)} kept chunks"
         )
 
@@ -398,10 +469,19 @@ def main() -> None:
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     with csv_path.open("w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["source", "target", "song_id", "num_tracks", "chunk_idx"])
-        for src_rel, tgt_rel, song_id, n_tracks, chunk_idx in pairs:
+        writer.writerow(
+            ["source", "target", "split", "song_id", "num_tracks", "chunk_idx"]
+        )
+        for src_rel, tgt_rel, split, song_id, n_tracks, chunk_idx in pairs:
             writer.writerow(
-                [src_rel.as_posix(), tgt_rel.as_posix(), song_id, n_tracks, chunk_idx]
+                [
+                    src_rel.as_posix(),
+                    tgt_rel.as_posix(),
+                    split or "",
+                    song_id,
+                    n_tracks,
+                    chunk_idx,
+                ]
             )
 
     print(f"Wrote {len(pairs)} pairs to {csv_path}")

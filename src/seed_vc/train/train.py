@@ -1,19 +1,20 @@
+import argparse
+import glob
 import os
+import shutil
 import sys
 
 import torch
 import torch.multiprocessing as mp
-import yaml
-import argparse
 import torchaudio
 import torchaudio.compliance.kaldi as kaldi
-import glob
+import yaml
+from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-import shutil
 
-from seed_vc.modules.commons import recursive_munch, build_model, load_checkpoint
-from seed_vc.train.optimizers import build_optimizer
+from seed_vc.modules.commons import build_model, load_checkpoint, recursive_munch
 from seed_vc.train.ft_dataset import build_ft_dataloader
+from seed_vc.train.optimizers import build_optimizer
 from seed_vc.utils.hf_utils import load_custom_model_from_hf
 
 os.environ["HF_HUB_CACHE"] = "./checkpoints/hf_cache"
@@ -31,12 +32,14 @@ class Trainer:
         steps=1000,
         save_interval=500,
         max_epochs=1000,
+        eval_interval=1,
         device="cuda:0",
     ):
         self.device = device
         config = yaml.safe_load(open(config_path))
         self.log_dir = os.path.join(config["log_dir"], run_name)
         os.makedirs(self.log_dir, exist_ok=True)
+        self.writer = SummaryWriter(self.log_dir)
         # copy config file to log dir
         shutil.copyfile(
             config_path, os.path.join(self.log_dir, os.path.basename(config_path))
@@ -47,6 +50,7 @@ class Trainer:
         self.n_epochs = max_epochs
         self.log_interval = config.get("log_interval", 10)
         self.save_interval = save_interval
+        self.eval_interval = max(1, eval_interval)
 
         self.sr = config["preprocess_params"].get("sr", 22050)
         self.hop_length = config["preprocess_params"]["spect_params"].get(
@@ -65,6 +69,21 @@ class Trainer:
             batch_size=batch_size,
             num_workers=num_workers,
         )
+        try:
+            self.val_dataloader = build_ft_dataloader(
+                data_dir,
+                preprocess_params["spect_params"],
+                self.sr,
+                batch_size=batch_size,
+                num_workers=num_workers,
+                split="test",
+                shuffle=False,
+            )
+            self.has_val = True
+        except ValueError:
+            print("No test split found in dataset CSV; evaluation will be skipped.")
+            self.val_dataloader = None
+            self.has_val = False
         self.f0_condition = config["model_params"]["DiT"].get("f0_condition", False)
         self.build_sv_model(device, config)
         self.build_semantic_fn(device, config)
@@ -188,8 +207,8 @@ class Trainer:
             self.bigvgan_model = self.bigvgan_model.eval().to(device)
             vocoder_fn = self.bigvgan_model
         elif vocoder_type == "hifigan":
-            from seed_vc.modules.hifigan.generator import HiFTGenerator
             from seed_vc.modules.hifigan.f0_predictor import ConvRNNF0Predictor
+            from seed_vc.modules.hifigan.generator import HiFTGenerator
 
             hift_config = yaml.safe_load(open("configs/hifigan.yml", "r"))
             hift_path = load_custom_model_from_hf(
@@ -288,7 +307,7 @@ class Trainer:
             )
         self.semantic_fn = semantic_fn
 
-    def train_one_step(self, batch):
+    def train_one_step(self, batch, update: bool = True):
         (
             src_waves,
             _src_mels,
@@ -378,14 +397,17 @@ class Trainer:
             + (ori_codebook_loss + alt_codebook_loss) * 0.15
         )
 
-        self.optimizer.zero_grad()
-        loss_total.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.cfm.parameters(), 10.0)
-        torch.nn.utils.clip_grad_norm_(self.model.length_regulator.parameters(), 10.0)
-        self.optimizer.step("cfm")
-        self.optimizer.step("length_regulator")
-        self.optimizer.scheduler(key="cfm")
-        self.optimizer.scheduler(key="length_regulator")
+        if update:
+            self.optimizer.zero_grad()
+            loss_total.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.cfm.parameters(), 10.0)
+            torch.nn.utils.clip_grad_norm_(
+                self.model.length_regulator.parameters(), 10.0
+            )
+            self.optimizer.step("cfm")
+            self.optimizer.step("length_regulator")
+            self.optimizer.scheduler(key="cfm")
+            self.optimizer.scheduler(key="length_regulator")
 
         return loss.detach().item()
 
@@ -401,7 +423,8 @@ class Trainer:
                 else loss
             )
             if self.iters % self.log_interval == 0:
-                print(f"epoch {self.epoch}, step {self.iters}, loss: {self.ema_loss}")
+                self.writer.add_scalar("train/loss", self.ema_loss, self.iters)
+                self.writer.flush()
             self.iters += 1
 
             if self.iters >= self.max_steps:
@@ -429,12 +452,35 @@ class Trainer:
                     for cp in checkpoints[:-2]:
                         os.remove(cp)
 
+    def evaluate(self):
+        if not self.has_val or self.val_dataloader is None:
+            return None
+        _ = [self.model[key].eval() for key in self.model]
+        total_loss = 0.0
+        n_batches = 0
+        with torch.no_grad():
+            for batch in self.val_dataloader:
+                batch = [b.to(self.device) for b in batch]
+                loss = self.train_one_step(batch, update=False)
+                total_loss += loss
+                n_batches += 1
+        avg_loss = (total_loss / n_batches) if n_batches > 0 else None
+        if avg_loss is not None:
+            self.writer.add_scalar("eval/loss", avg_loss, self.iters)
+            self.writer.flush()
+        _ = [self.model[key].train() for key in self.model]
+        return avg_loss
+
     def train(self):
         self.ema_loss = 0
         self.loss_smoothing_rate = 0.99
         for epoch in range(self.n_epochs):
             self.epoch = epoch
             self.train_one_epoch()
+            if (epoch + 1) % self.eval_interval == 0 and self.has_val:
+                eval_loss = self.evaluate()
+                if eval_loss is not None:
+                    print(f"Eval loss at epoch {epoch + 1}: {eval_loss:.4f}")
             if self.iters >= self.max_steps:
                 break
 
@@ -445,6 +491,7 @@ class Trainer:
         os.makedirs(self.log_dir, exist_ok=True)
         save_path = os.path.join(self.log_dir, "ft_model.pth")
         torch.save(state, save_path)
+        self.writer.close()
         print(f"Final model saved at {save_path}")
 
 
@@ -459,6 +506,7 @@ def main(args):
         max_epochs=args.max_epochs,
         save_interval=args.save_every,
         num_workers=args.num_workers,
+        eval_interval=args.eval_every,
         device=args.device,
     )
     trainer.train()
@@ -478,10 +526,16 @@ if __name__ == "__main__":
     parser.add_argument("--pretrained-ckpt", type=str, default=None)
     parser.add_argument("--dataset", type=str, default="data/dataset.csv")
     parser.add_argument("--run-name", type=str, default="my_run")
-    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--max-steps", type=int, default=1000)
     parser.add_argument("--max-epochs", type=int, default=1000)
-    parser.add_argument("--save-every", type=int, default=10)
+    parser.add_argument("--save-every", type=int, default=100)
+    parser.add_argument(
+        "--eval-every",
+        type=int,
+        default=1,
+        help="Run evaluation every N epochs on the test split.",
+    )
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--gpu", type=int, help="Which GPU id to use", default=0)
     args = parser.parse_args()

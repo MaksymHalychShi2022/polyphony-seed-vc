@@ -27,8 +27,10 @@ class FT_Dataset(torch.utils.data.Dataset):
         spect_params,
         sr=22050,
         batch_size=1,
+        split="train",
     ):
         self.data_path = data_path
+        self.split = None if split is None else split.lower()
         self.data = self._build_pairs(data_path)
 
         self.sr = sr
@@ -67,12 +69,21 @@ class FT_Dataset(torch.utils.data.Dataset):
             f.seek(0)
             if "source" in peek and "target" in peek:
                 reader = csv.DictReader(f)
-                rows = [(row.get("source"), row.get("target")) for row in reader]
+                rows = [
+                    (row.get("source"), row.get("target"), row.get("split"))
+                    for row in reader
+                ]
             else:
                 reader = csv.reader(f)
-                rows = [tuple(row[:2]) for row in reader if len(row) >= 2]
-        for src_rel, tgt_rel in rows:
+                rows = [
+                    (row[0], row[1], row[2] if len(row) > 2 else None)
+                    for row in reader
+                    if len(row) >= 2
+                ]
+        for src_rel, tgt_rel, row_split in rows:
             if src_rel is None or tgt_rel is None:
+                continue
+            if self.split and row_split and row_split.lower() != self.split:
                 continue
             src = (base_dir / src_rel).expanduser()
             tgt = (base_dir / tgt_rel).expanduser()
@@ -87,7 +98,9 @@ class FT_Dataset(torch.utils.data.Dataset):
                 continue
             pairs.append((src, tgt))
         if len(pairs) == 0:
-            raise ValueError("CSV provided but no valid (source,target) pairs found.")
+            raise ValueError(
+                "CSV provided but no valid (source,target) pairs found for requested split."
+            )
         return pairs
 
     def __len__(self):
@@ -125,12 +138,20 @@ class FT_Dataset(torch.utils.data.Dataset):
         return src_wave.squeeze(0), src_mel, tgt_wave.squeeze(0), tgt_mel
 
 
-def build_ft_dataloader(data_path, spect_params, sr, batch_size=1, num_workers=0):
-    dataset = FT_Dataset(data_path, spect_params, sr, batch_size)
+def build_ft_dataloader(
+    data_path,
+    spect_params,
+    sr,
+    batch_size=1,
+    num_workers=0,
+    split="train",
+    shuffle=True,
+):
+    dataset = FT_Dataset(data_path, spect_params, sr, batch_size, split=split)
     dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=shuffle,
         num_workers=num_workers,
         collate_fn=collate,
     )
