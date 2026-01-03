@@ -6,5 +6,8 @@ tasks:
   demo:
     - uv run python -m demo.app
 
+  prepare-dataset:
+    - uv run python -m scripts.build_polyphony_pairs --max-songs 10
+
   train:
-    - uv run python -m seed_vc.train.train
+    - uv run python -m seed_vc.train.train --dataset data/polyphony-project-dataset/pairs.csv

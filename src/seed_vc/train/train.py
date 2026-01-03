@@ -452,7 +452,7 @@ def main(args):
     trainer = Trainer(
         config_path=args.config,
         pretrained_ckpt_path=args.pretrained_ckpt,
-        data_dir=args.dataset_dir,
+        data_dir=args.dataset,
         run_name=args.run_name,
         batch_size=args.batch_size,
         steps=args.max_steps,
@@ -476,7 +476,7 @@ if __name__ == "__main__":
         default="configs/presets/config_dit_mel_seed_uvit_whisper_base_f0_44k.yml",
     )
     parser.add_argument("--pretrained-ckpt", type=str, default=None)
-    parser.add_argument("--dataset-dir", type=str, default="data/dataset.csv")
+    parser.add_argument("--dataset", type=str, default="data/dataset.csv")
     parser.add_argument("--run-name", type=str, default="my_run")
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--max-steps", type=int, default=1000)
