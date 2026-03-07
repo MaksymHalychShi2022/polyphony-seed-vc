@@ -7,6 +7,7 @@ import torch
 import yaml
 from tqdm import tqdm
 
+from seed_vc.features.embedding import CampplusEmbeddingExtractor
 from seed_vc.features.f0 import F0FeatureExtractor
 from seed_vc.features.mel import MelSpectrogramExtractor
 from seed_vc.features.semantic import WhisperFeatureExtractor
@@ -89,6 +90,7 @@ class FeaturesDataset(TargetSourcePairsDataset):
         require_cache: bool = True,
         semantic_device: str = "cpu",
         f0_device: str = "cpu",
+        embedding_device: str = "cpu",
     ):
         super().__init__(data_path=data_path, batch_size=batch_size)
         self.require_cache = require_cache
@@ -109,6 +111,11 @@ class FeaturesDataset(TargetSourcePairsDataset):
             device=f0_device,
             require_cache=require_cache,
         )
+        self.embedding_extractor = CampplusEmbeddingExtractor(
+            cache_root=cache_root,
+            device=embedding_device,
+            require_cache=require_cache,
+        )
 
     def __getitem__(self, idx):
         src_path, tgt_path = super().__getitem__(idx)
@@ -122,6 +129,9 @@ class FeaturesDataset(TargetSourcePairsDataset):
         )
         src_f0 = self.f0_extractor.extract(src_path, require_cache=self.require_cache)
         tgt_f0 = self.f0_extractor.extract(tgt_path, require_cache=self.require_cache)
+        tgt_embedding = self.embedding_extractor.extract(
+            tgt_path, require_cache=self.require_cache
+        )
         return (
             src_mel,
             tgt_mel,
@@ -129,6 +139,7 @@ class FeaturesDataset(TargetSourcePairsDataset):
             tgt_semantic,
             src_f0,
             tgt_f0,
+            tgt_embedding,
             str(src_path),
             str(tgt_path),
         )
@@ -168,6 +179,9 @@ def collate_features(batch):
     src_f0_lengths = torch.zeros(batch_size).long()
     tgt_f0_lengths = torch.zeros(batch_size).long()
 
+    embedding_dim = int(batch[0][6].numel())
+    tgt_embeddings = torch.zeros((batch_size, embedding_dim)).float()
+
     src_paths = []
     tgt_paths = []
     for bid, (
@@ -177,6 +191,7 @@ def collate_features(batch):
         tgt_semantic,
         src_f0,
         tgt_f0,
+        tgt_embedding,
         src_path,
         tgt_path,
     ) in enumerate(batch):
@@ -192,6 +207,7 @@ def collate_features(batch):
         tgt_semantics[bid, :tgt_semantic_size, :] = tgt_semantic
         src_f0s[bid, :src_f0_size] = src_f0
         tgt_f0s[bid, :tgt_f0_size] = tgt_f0
+        tgt_embeddings[bid] = tgt_embedding.reshape(-1).to(torch.float32)
         src_mel_lengths[bid] = src_mel_size
         tgt_mel_lengths[bid] = tgt_mel_size
         src_semantic_lengths[bid] = src_semantic_size
@@ -214,6 +230,7 @@ def collate_features(batch):
         src_f0_lengths,
         tgt_f0s,
         tgt_f0_lengths,
+        tgt_embeddings,
         src_paths,
         tgt_paths,
     )
@@ -231,6 +248,7 @@ def build_features_dataloader(
     require_cache: bool = True,
     semantic_device: str = "cpu",
     f0_device: str = "cpu",
+    embedding_device: str = "cpu",
 ):
     dataset = FeaturesDataset(
         data_path=data_path,
@@ -242,6 +260,7 @@ def build_features_dataloader(
         require_cache=require_cache,
         semantic_device=semantic_device,
         f0_device=f0_device,
+        embedding_device=embedding_device,
     )
     return torch.utils.data.DataLoader(
         dataset,
@@ -287,7 +306,7 @@ def build_features_dataloader(
     show_default=True,
     help=(
         "When enabled, fail if cache is missing. "
-        "Disable to compute-and-cache missing mels, semantics, and f0 while iterating."
+        "Disable to compute-and-cache missing mels, semantics, f0, and embeddings while iterating."
     ),
 )
 @click.option(
@@ -304,6 +323,13 @@ def build_features_dataloader(
     type=click.Choice(["cpu", "cuda"]),
     help="Device used for f0 feature extraction when cache is missing.",
 )
+@click.option(
+    "--embedding-device",
+    default="cpu",
+    show_default=True,
+    type=click.Choice(["cpu", "cuda"]),
+    help="Device used for campplus embedding extraction when cache is missing.",
+)
 def main(
     dataset_path: Path,
     config_path: Path,
@@ -312,6 +338,7 @@ def main(
     require_cache: bool,
     semantic_device: str,
     f0_device: str,
+    embedding_device: str,
 ):
     config = yaml.safe_load(config_path.read_text())
     preprocess_params = config["preprocess_params"]
@@ -337,6 +364,7 @@ def main(
         require_cache=require_cache,
         semantic_device=semantic_device,
         f0_device=f0_device,
+        embedding_device=embedding_device,
     )
 
     first_logged = False
@@ -354,6 +382,7 @@ def main(
             src_f0_lengths,
             tgt_f0s,
             tgt_f0_lengths,
+            tgt_embeddings,
             src_paths,
             tgt_paths,
         ) = batch
@@ -371,6 +400,7 @@ def main(
             print(f"  tgt_f0s shape: {tuple(tgt_f0s.shape)}")
             print(f"  src_f0_lengths: {src_f0_lengths.tolist()}")
             print(f"  tgt_f0_lengths: {tgt_f0_lengths.tolist()}")
+            print(f"  tgt_embeddings shape: {tuple(tgt_embeddings.shape)}")
             print(f"  src_paths[0]: {src_paths[0] if src_paths else 'N/A'}")
             print(f"  tgt_paths[0]: {tgt_paths[0] if tgt_paths else 'N/A'}")
             first_logged = True
