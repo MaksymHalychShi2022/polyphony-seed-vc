@@ -89,7 +89,7 @@ def apply_global_gain(waves, gain: float):
     return [np.asarray(w * gain, dtype=np.float32) for w in waves]
 
 
-def apply_peak_limit(waves, peak: float):
+def apply_peak_normalize(waves, peak: float):
     if peak <= 0:
         return waves
     max_peak = 0.0
@@ -98,8 +98,6 @@ def apply_peak_limit(waves, peak: float):
             continue
         max_peak = max(max_peak, float(np.max(np.abs(w))))
     if max_peak <= 0:
-        return waves
-    if max_peak <= float(peak):
         return waves
     scale = float(peak) / max_peak
     return [np.asarray(w * scale, dtype=np.float32) for w in waves]
@@ -146,16 +144,6 @@ def process_song(
     waves = [load_mono(p, sr=sr) for p in stems]
     mix, waves = mix_sum(waves)
 
-    gain = compute_lufs_gain(mix, sr=sr, target_lufs=target_lufs)
-    waves = apply_global_gain(waves, gain)
-    # Recompute mix as exact sum after gain.
-    mix, waves = mix_sum(waves)
-
-    waves = apply_peak_limit(waves + [mix], peak=peak)
-    waves, mix = waves[:-1], waves[-1]
-    # Recompute mix again to keep exact sum after peak limiting.
-    mix, waves = mix_sum(waves)
-
     chunk_len = int(round(float(chunk_seconds) * int(sr)))
     if chunk_len <= 0:
         raise ValueError("chunk_seconds must be > 0")
@@ -176,10 +164,29 @@ def process_song(
         if sratio > float(max_silence_ratio):
             continue
 
+        stem_chunks = [
+            np.asarray(stem_wave[start:end], dtype=np.float32) for stem_wave in waves
+        ]
+
+        # Normalize each stem chunk independently to reduce source/target mismatch.
+        stem_chunks = [
+            apply_global_gain(
+                [stem_chunk],
+                compute_lufs_gain(stem_chunk, sr=sr, target_lufs=target_lufs),
+            )[0]
+            for stem_chunk in stem_chunks
+        ]
+
+        # Mixture is always the exact sum of normalized stems.
+        mix_chunk, stem_chunks = mix_sum(stem_chunks)
+
+        # Final peak normalization uses one shared gain to avoid clipping.
+        norm_chunks = apply_peak_normalize(stem_chunks + [mix_chunk], peak=peak)
+        stem_chunks, mix_chunk = norm_chunks[:-1], norm_chunks[-1]
+
         chunk_id = f"{chunk_idx:06d}"
         # Write stems first, then mixture.
-        for stem_name, stem_wave in zip(stem_names, waves):
-            stem_chunk = np.asarray(stem_wave[start:end], dtype=np.float32)
+        for stem_name, stem_chunk in zip(stem_names, stem_chunks):
             out_path = song_out / f"{chunk_id}_{stem_name}.flac"
             save_flac(out_path, stem_chunk, sr=sr, subtype=subtype)
 
@@ -206,25 +213,25 @@ def process_song(
 @click.option(
     "--target-lufs",
     type=float,
-    default=-20.0,
-    help="Target integrated loudness for mixture (LUFS)",
+    default=-14.0,
+    help="Per-stem per-chunk target integrated loudness (LUFS)",
 )
 @click.option(
     "--peak",
     type=float,
     default=0.99,
-    help="Peak cap after loudness normalization (0 disables)",
+    help="Per-chunk target peak after stem LUFS normalization (0 disables)",
 )
 @click.option(
     "--silence-threshold-db",
     type=float,
-    default=-40.0,
+    default=-30.0,
     help="RMS (dB) threshold for silence detection",
 )
 @click.option(
     "--max-silence-ratio",
     type=float,
-    default=0.1,
+    default=0.05,
     help="Skip chunk if fraction of silent frames exceeds this (0 = any silence)",
 )
 @click.option(
@@ -236,7 +243,7 @@ def process_song(
 @click.option(
     "--subtype",
     type=str,
-    default="PCM_16",
+    default="PCM_24",
     help="SoundFile FLAC subtype (e.g. PCM_16, PCM_24)",
 )
 def main(
