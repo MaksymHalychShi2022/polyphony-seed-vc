@@ -2,9 +2,11 @@ import random
 from pathlib import Path
 import csv
 
+import click
 import librosa
 import numpy as np
 import torch
+from tqdm import tqdm
 
 from seed_vc.modules.audio import mel_spectrogram
 
@@ -27,10 +29,8 @@ class FT_Dataset(torch.utils.data.Dataset):
         spect_params,
         sr=22050,
         batch_size=1,
-        split="train",
     ):
         self.data_path = data_path
-        self.split = None if split is None else split.lower()
         self.data = self._build_pairs(data_path)
 
         self.sr = sr
@@ -65,42 +65,42 @@ class FT_Dataset(torch.utils.data.Dataset):
         pairs = []
         base_dir = data_path.parent
         with open(data_path, "r", newline="") as f:
-            peek = f.readline()
-            f.seek(0)
-            if "source" in peek and "target" in peek:
-                reader = csv.DictReader(f)
-                rows = [
-                    (row.get("source"), row.get("target"), row.get("split"))
-                    for row in reader
-                ]
-            else:
-                reader = csv.reader(f)
-                rows = [
-                    (row[0], row[1], row[2] if len(row) > 2 else None)
-                    for row in reader
-                    if len(row) >= 2
-                ]
-        for src_rel, tgt_rel, row_split in rows:
-            if src_rel is None or tgt_rel is None:
-                continue
-            if self.split and row_split and row_split.lower() != self.split:
-                continue
-            src = (base_dir / src_rel).expanduser()
-            tgt = (base_dir / tgt_rel).expanduser()
-            if not src.exists() or not tgt.exists():
-                print(f"Warning: skipping missing pair {src} / {tgt}")
-                continue
-            if (
-                src.suffix.lower() not in audio_exts
-                or tgt.suffix.lower() not in audio_exts
-            ):
-                print(f"Warning: unsupported audio extension in pair {src} / {tgt}")
-                continue
-            pairs.append((src, tgt))
+            reader = csv.DictReader(f)
+            if not reader.fieldnames:
+                raise ValueError("CSV is empty.")
+
+            fieldnames = [name.strip().lower() for name in reader.fieldnames if name]
+            if "source" not in fieldnames or "target" not in fieldnames:
+                raise ValueError("CSV must include header columns: source,target")
+
+            for row in reader:
+                normalized_row = {
+                    (k.strip().lower() if k else ""): (
+                        v.strip() if isinstance(v, str) else v
+                    )
+                    for k, v in row.items()
+                }
+
+                src_rel = normalized_row.get("source")
+                tgt_rel = normalized_row.get("target")
+
+                if not src_rel or not tgt_rel:
+                    continue
+
+                src = (base_dir / src_rel).expanduser()
+                tgt = (base_dir / tgt_rel).expanduser()
+                if not src.exists() or not tgt.exists():
+                    print(f"Warning: skipping missing pair {src} / {tgt}")
+                    continue
+                if (
+                    src.suffix.lower() not in audio_exts
+                    or tgt.suffix.lower() not in audio_exts
+                ):
+                    print(f"Warning: unsupported audio extension in pair {src} / {tgt}")
+                    continue
+                pairs.append((src, tgt))
         if len(pairs) == 0:
-            raise ValueError(
-                "CSV provided but no valid (source,target) pairs found for requested split."
-            )
+            raise ValueError("CSV provided but no valid (source,target) pairs found.")
         return pairs
 
     def __len__(self):
@@ -126,9 +126,13 @@ class FT_Dataset(torch.utils.data.Dataset):
             )
             return self.__getitem__(random.randint(0, len(self)))
         if src_orig_sr != self.sr:
-            src_speech = librosa.resample(src_speech, src_orig_sr, self.sr)
+            src_speech = librosa.resample(
+                y=src_speech, orig_sr=src_orig_sr, target_sr=self.sr
+            )
         if tgt_orig_sr != self.sr:
-            tgt_speech = librosa.resample(tgt_speech, tgt_orig_sr, self.sr)
+            tgt_speech = librosa.resample(
+                y=tgt_speech, orig_sr=tgt_orig_sr, target_sr=self.sr
+            )
 
         src_wave = torch.from_numpy(src_speech).float().unsqueeze(0)
         tgt_wave = torch.from_numpy(tgt_speech).float().unsqueeze(0)
@@ -144,10 +148,10 @@ def build_ft_dataloader(
     sr,
     batch_size=1,
     num_workers=0,
-    split="train",
     shuffle=True,
 ):
-    dataset = FT_Dataset(data_path, spect_params, sr, batch_size, split=split)
+    dataset = FT_Dataset(data_path, spect_params, sr, batch_size)
+    print(batch_size, len(dataset))
     dataloader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
@@ -206,9 +210,19 @@ def collate(batch):
     )
 
 
-if __name__ == "__main__":
-    data_path = "./example/reference"
-    sr = 22050
+@click.command(help="Iterate FT_Dataset once and exit.")
+@click.option(
+    "--dataset",
+    "dataset_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Path to CSV with source,target rows.",
+)
+@click.option("--sr", default=22050, show_default=True, type=int, help="Sampling rate.")
+@click.option(
+    "--batch-size", default=1, show_default=True, type=int, help="Batch size."
+)
+def main(dataset_path, sr, batch_size):
     spect_params = {
         "n_fft": 1024,
         "win_length": 1024,
@@ -217,11 +231,41 @@ if __name__ == "__main__":
         "fmin": 0,
         "fmax": 8000,
     }
-    dataloader = build_ft_dataloader(
-        data_path, spect_params, sr, batch_size=2, num_workers=0
+
+    ft_dataloader = build_ft_dataloader(
+        str(dataset_path),
+        spect_params,
+        sr=sr,
+        batch_size=batch_size,
+        num_workers=0,
+        shuffle=False,
     )
-    for idx, batch in enumerate(dataloader):
-        wave, mel, wave_lengths, mel_lengths = batch
-        print(wave.shape, mel.shape)
-        if idx == 10:
-            break
+    first_logged = False
+    for batch in tqdm(ft_dataloader, desc="Processing", unit=" batch"):
+        (
+            src_waves,
+            src_mels,
+            src_wave_lengths,
+            src_mel_lengths,
+            tgt_waves,
+            tgt_mels,
+            tgt_wave_lengths,
+            tgt_mel_lengths,
+        ) = batch
+        if not first_logged:
+            print("First batch details:")
+            print(f"  src_waves shape: {tuple(src_waves.shape)}")
+            print(f"  src_mels shape: {tuple(src_mels.shape)}")
+            print(f"  tgt_waves shape: {tuple(tgt_waves.shape)}")
+            print(f"  tgt_mels shape: {tuple(tgt_mels.shape)}")
+            print(f"  src_wave_lengths: {src_wave_lengths.tolist()}")
+            print(f"  tgt_wave_lengths: {tgt_wave_lengths.tolist()}")
+            print(f"  src_mel_lengths: {src_mel_lengths.tolist()}")
+            print(f"  tgt_mel_lengths: {tgt_mel_lengths.tolist()}")
+            first_logged = True
+
+    print("Done.")
+
+
+if __name__ == "__main__":
+    main()

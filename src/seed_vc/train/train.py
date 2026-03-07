@@ -76,12 +76,13 @@ class Trainer:
                 self.sr,
                 batch_size=batch_size,
                 num_workers=num_workers,
-                split="test",
                 shuffle=False,
             )
             self.has_val = True
         except ValueError:
-            print("No test split found in dataset CSV; evaluation will be skipped.")
+            print(
+                "No valid validation data found in dataset CSV; evaluation will be skipped."
+            )
             self.val_dataloader = None
             self.has_val = False
         self.f0_condition = config["model_params"]["DiT"].get("f0_condition", False)
@@ -534,7 +535,7 @@ if __name__ == "__main__":
         "--eval-every",
         type=int,
         default=1,
-        help="Run evaluation every N epochs on the test split.",
+        help="Run evaluation every N epochs.",
     )
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--gpu", type=int, help="Which GPU id to use", default=0)

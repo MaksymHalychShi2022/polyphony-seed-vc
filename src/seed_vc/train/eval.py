@@ -22,19 +22,13 @@ def parse_args():
         "--dataset",
         type=str,
         default="data/dataset.csv",
-        help="CSV with source,target[,split] columns.",
+        help="CSV with source,target columns.",
     )
     parser.add_argument(
         "--config",
         type=str,
         default="configs/presets/config_dit_mel_seed_uvit_whisper_base_f0_44k.yml",
         help="Training config used to derive sampling rate and spectrogram params.",
-    )
-    parser.add_argument(
-        "--split",
-        type=str,
-        default="test",
-        help="Which dataset split to evaluate (uses CSV split column).",
     )
     parser.add_argument(
         "--generated-dir",
@@ -114,12 +108,12 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_dataset(dataset_path: Path, config_path: Path, split: str) -> FT_Dataset:
+def load_dataset(dataset_path: Path, config_path: Path) -> FT_Dataset:
     config = yaml.safe_load(open(config_path, "r"))
     preprocess_params = config["preprocess_params"]
     sr = preprocess_params.get("sr", 22050)
     spect_params = preprocess_params["spect_params"]
-    return FT_Dataset(dataset_path, spect_params, sr=sr, batch_size=1, split=split)
+    return FT_Dataset(dataset_path, spect_params, sr=sr, batch_size=1)
 
 
 def resolve_generated_path(
@@ -210,7 +204,7 @@ def evaluate(args: argparse.Namespace) -> int:
         generated_base = dataset_path.parent / generated_base
 
     try:
-        dataset = load_dataset(dataset_path, config_path, args.split)
+        dataset = load_dataset(dataset_path, config_path)
     except ValueError as exc:
         print(f"Failed to load dataset: {exc}")
         return 1
