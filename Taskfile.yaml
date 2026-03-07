@@ -17,7 +17,7 @@ tasks:
     - uv run python -m scripts.build_polyphony_pairs --max-songs 0 --out-dir data/polyphony-project-dataset-full
 
   process-raw-dataset:
-    desc: "Process raw <id>/<stem>.mp3 into chunked FLAC dataset"
+    desc: "Process raw dataset and build train/val CSV splits"
     cmds:
       - rm -rf "{{.DATASET_PROCESSED}}" | true
       - >
@@ -25,6 +25,11 @@ tasks:
         {{.DATASET_RAW}}
         --max-songs 10
         --out-dir "{{.DATASET_PROCESSED}}"
+      - >
+        uv run python scripts/build_train_val_csv.py
+        "{{.DATASET_PROCESSED}}"
+        --train-csv "{{.TRAIN_DATASET}}"
+        --val-csv "{{.VAL_DATASET}}"
 
   train:
     - uv run python -m seed_vc.train.train --dataset data/polyphony-project-dataset-tmp/pairs.csv
