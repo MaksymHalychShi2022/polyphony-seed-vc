@@ -6,7 +6,7 @@ import yaml
 from tqdm import tqdm
 
 from seed_vc.features.semantic import WhisperFeatureExtractor
-from seed_vc.train.features_dataset import load_source_target_pairs
+from seed_vc.train.features_dataset import TargetSourcePairsDataset
 
 
 def _resolve_device(device: str) -> str:
@@ -59,8 +59,10 @@ def main(dataset_path: Path, config_path: Path, cache_root: Path, device: str) -
         require_cache=False,
     )
 
-    pairs = load_source_target_pairs(dataset_path)
-    unique_audio_paths = sorted({src for src, _ in pairs} | {tgt for _, tgt in pairs})
+    pairs_dataset = TargetSourcePairsDataset(dataset_path)
+    unique_audio_paths = sorted(
+        {src for src, _ in pairs_dataset.data} | {tgt for _, tgt in pairs_dataset.data}
+    )
 
     cache_files_before = sum(
         1
@@ -82,7 +84,7 @@ def main(dataset_path: Path, config_path: Path, cache_root: Path, device: str) -
 
     click.echo(
         "Done. "
-        f"Pairs: {len(pairs)}. "
+        f"Pairs: {len(pairs_dataset)}. "
         f"Unique audio files: {len(unique_audio_paths)}. "
         f"Cache files before: {cache_files_before}. "
         f"Cache files after: {cache_files_after}. "

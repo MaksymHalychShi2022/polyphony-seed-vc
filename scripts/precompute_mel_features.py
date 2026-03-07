@@ -4,7 +4,8 @@ import click
 import yaml
 from tqdm import tqdm
 
-from seed_vc.train.features_dataset import FeaturesDataset
+from seed_vc.features.mel import MelSpectrogramExtractor
+from seed_vc.train.features_dataset import TargetSourcePairsDataset
 
 
 @click.command(context_settings={"show_default": True})
@@ -34,37 +35,36 @@ def main(dataset_path: Path, config_path: Path, cache_root: Path) -> None:
     sr = int(preprocess_params.get("sr", 22050))
     spect_params = preprocess_params["spect_params"]
 
-    dataset = FeaturesDataset(
-        data_path=dataset_path,
+    extractor = MelSpectrogramExtractor(
         spect_params=spect_params,
         sr=sr,
-        batch_size=1,
         cache_root=cache_root,
         require_cache=False,
     )
+    pairs_dataset = TargetSourcePairsDataset(dataset_path)
     unique_audio_paths = sorted(
-        {src for src, _ in dataset.data} | {tgt for _, tgt in dataset.data}
+        {src for src, _ in pairs_dataset.data} | {tgt for _, tgt in pairs_dataset.data}
     )
 
     cache_files_before = sum(
         1
         for audio_path in unique_audio_paths
-        if dataset.mel_extractor.get_cache_path(audio_path).exists()
+        if extractor.get_cache_path(audio_path).exists()
     )
 
-    for i in tqdm(range(len(dataset)), desc="Precomputing mel", unit="pair"):
-        _ = dataset[i]
+    for audio_path in tqdm(unique_audio_paths, desc="Precomputing mel", unit="audio"):
+        _ = extractor.extract(audio_path)
 
     cache_files_after = sum(
         1
         for audio_path in unique_audio_paths
-        if dataset.mel_extractor.get_cache_path(audio_path).exists()
+        if extractor.get_cache_path(audio_path).exists()
     )
     cache_writes = max(0, cache_files_after - cache_files_before)
 
     click.echo(
         "Done. "
-        f"Pairs: {len(dataset.data)}. "
+        f"Pairs: {len(pairs_dataset)}. "
         f"Unique audio files: {len(unique_audio_paths)}. "
         f"Cache files before: {cache_files_before}. "
         f"Cache files after: {cache_files_after}. "
