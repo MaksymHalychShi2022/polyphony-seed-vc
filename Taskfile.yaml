@@ -28,15 +28,43 @@ tasks:
         --train-csv "{{.TRAIN_DATASET}}"
         --val-csv "{{.VAL_DATASET}}"
 
-  iterate-ft-train:
-    desc: "Iterate FT train split once and exit"
+  extract-features:train:
+    desc: "Precompute mel features cache for train split"
     cmds:
-      - uv run python -m seed_vc.train.ft_dataset --dataset "{{.TRAIN_DATASET}}"
+      - >
+        uv run python scripts/precompute_mel_features.py
+        --dataset "{{.TRAIN_DATASET}}"
+        --cache-root "{{.CACHE_DIR}}"
+
+  extract-features:val:
+    desc: "Precompute mel features cache for val split"
+    cmds:
+      - >
+        uv run python scripts/precompute_mel_features.py
+        --dataset "{{.VAL_DATASET}}"
+        --cache-root "{{.CACHE_DIR}}"
+
+  extract-features:
+    desc: "Precompute mel features cache for train and val splits"
+    cmds:
+      - task extract-features:train
+      - task extract-features:val
+
+  iterate-ft-train:
+    desc: "Iterate cached feature train split once and exit"
+    cmds:
+      - >
+        uv run python -m seed_vc.train.features_dataset
+        --dataset "{{.TRAIN_DATASET}}"
+        --cache-root "{{.CACHE_DIR}}"
 
   iterate-ft-val:
-    desc: "Iterate FT val split once and exit"
+    desc: "Iterate cached feature val split once and exit"
     cmds:
-      - uv run python -m seed_vc.train.ft_dataset --dataset "{{.VAL_DATASET}}"
+      - >
+        uv run python -m seed_vc.train.features_dataset
+        --dataset "{{.VAL_DATASET}}"
+        --cache-root "{{.CACHE_DIR}}"
 
   train:
     - uv run python -m seed_vc.train.train --dataset data/polyphony-project-dataset-tmp/pairs.csv

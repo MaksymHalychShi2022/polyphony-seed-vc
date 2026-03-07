@@ -1,0 +1,237 @@
+import csv
+from pathlib import Path
+
+import click
+import numpy as np
+import torch
+import yaml
+from tqdm import tqdm
+
+from seed_vc.features.mel import MelSpectrogramExtractor
+
+
+def load_source_target_pairs(data_path: str | Path) -> list[tuple[Path, Path]]:
+    audio_exts = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".opus"}
+    csv_path = Path(data_path).expanduser().resolve()
+    if csv_path.suffix.lower() != ".csv":
+        raise ValueError(
+            "Only CSV input is supported. Provide a CSV with source,target columns."
+        )
+
+    pairs = []
+    base_dir = csv_path.parent
+    with csv_path.open("r", newline="") as f:
+        reader = csv.DictReader(f)
+        if not reader.fieldnames:
+            raise ValueError("CSV is empty.")
+
+        fieldnames = [name.strip().lower() for name in reader.fieldnames if name]
+        if "source" not in fieldnames or "target" not in fieldnames:
+            raise ValueError("CSV must include header columns: source,target")
+
+        for row in reader:
+            normalized_row = {
+                (k.strip().lower() if k else ""): (
+                    v.strip() if isinstance(v, str) else v
+                )
+                for k, v in row.items()
+            }
+            src_rel = normalized_row.get("source")
+            tgt_rel = normalized_row.get("target")
+            if not src_rel or not tgt_rel:
+                continue
+
+            src_path = (base_dir / src_rel).expanduser().resolve()
+            tgt_path = (base_dir / tgt_rel).expanduser().resolve()
+            if not src_path.exists() or not tgt_path.exists():
+                continue
+            if (
+                src_path.suffix.lower() not in audio_exts
+                or tgt_path.suffix.lower() not in audio_exts
+            ):
+                continue
+            pairs.append((src_path, tgt_path))
+
+    if len(pairs) == 0:
+        raise ValueError("CSV provided but no valid (source,target) pairs found.")
+    return pairs
+
+
+class FeaturesDataset(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        data_path: str | Path,
+        spect_params: dict,
+        cache_root: str | Path,
+        sr: int = 22050,
+        batch_size: int = 1,
+        require_cache: bool = True,
+    ):
+        self.data_path = data_path
+        self.data = load_source_target_pairs(data_path)
+        self.require_cache = require_cache
+        self.mel_extractor = MelSpectrogramExtractor(
+            spect_params=spect_params,
+            sr=sr,
+            cache_root=cache_root,
+            require_cache=require_cache,
+        )
+
+        assert len(self.data) != 0
+        while len(self.data) < batch_size:
+            self.data += self.data
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        idx = idx % len(self.data)
+        src_path, tgt_path = self.data[idx]
+        src_mel = self.mel_extractor.extract(src_path, require_cache=self.require_cache)
+        tgt_mel = self.mel_extractor.extract(tgt_path, require_cache=self.require_cache)
+        return src_mel, tgt_mel, str(src_path), str(tgt_path)
+
+
+def collate_features(batch):
+    batch_size = len(batch)
+    lengths = [b[1].shape[1] for b in batch]
+    batch_indexes = np.argsort(lengths)[::-1]
+    batch = [batch[bid] for bid in batch_indexes]
+
+    n_mels = batch[0][0].size(0)
+    max_src_mel_len = max([b[0].shape[1] for b in batch])
+    max_tgt_mel_len = max([b[1].shape[1] for b in batch])
+
+    src_mels = torch.zeros((batch_size, n_mels, max_src_mel_len)).float() - 10
+    tgt_mels = torch.zeros((batch_size, n_mels, max_tgt_mel_len)).float() - 10
+    src_mel_lengths = torch.zeros(batch_size).long()
+    tgt_mel_lengths = torch.zeros(batch_size).long()
+
+    src_paths = []
+    tgt_paths = []
+    for bid, (src_mel, tgt_mel, src_path, tgt_path) in enumerate(batch):
+        src_mel_size = src_mel.size(1)
+        tgt_mel_size = tgt_mel.size(1)
+        src_mels[bid, :, :src_mel_size] = src_mel
+        tgt_mels[bid, :, :tgt_mel_size] = tgt_mel
+        src_mel_lengths[bid] = src_mel_size
+        tgt_mel_lengths[bid] = tgt_mel_size
+        src_paths.append(src_path)
+        tgt_paths.append(tgt_path)
+
+    return src_mels, src_mel_lengths, tgt_mels, tgt_mel_lengths, src_paths, tgt_paths
+
+
+def build_features_dataloader(
+    data_path: str | Path,
+    spect_params: dict,
+    cache_root: str | Path,
+    sr: int,
+    batch_size: int = 1,
+    num_workers: int = 0,
+    shuffle: bool = True,
+    require_cache: bool = True,
+):
+    dataset = FeaturesDataset(
+        data_path=data_path,
+        spect_params=spect_params,
+        cache_root=cache_root,
+        sr=sr,
+        batch_size=batch_size,
+        require_cache=require_cache,
+    )
+    return torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        collate_fn=collate_features,
+    )
+
+
+@click.command(help="Iterate FeaturesDataset once and exit.")
+@click.option(
+    "--dataset",
+    "dataset_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Path to CSV with source,target rows.",
+)
+@click.option(
+    "--config",
+    "config_path",
+    default="configs/presets/config_dit_mel_seed_uvit_whisper_base_f0_44k.yml",
+    show_default=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Config used to load preprocess_params.sr and spect_params.",
+)
+@click.option(
+    "--batch-size",
+    default=1,
+    show_default=True,
+    type=int,
+    help="Batch size.",
+)
+@click.option(
+    "--cache-root",
+    required=True,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Cache root. Features are stored under <cache-root>/features/.",
+)
+@click.option(
+    "--require-cache/--allow-compute-missing",
+    default=True,
+    show_default=True,
+    help=(
+        "When enabled, fail if cache is missing. "
+        "Disable to compute-and-cache missing mels while iterating."
+    ),
+)
+def main(
+    dataset_path: Path,
+    config_path: Path,
+    batch_size: int,
+    cache_root: Path,
+    require_cache: bool,
+):
+    config = yaml.safe_load(config_path.read_text())
+    preprocess_params = config["preprocess_params"]
+    sr = int(preprocess_params.get("sr", 22050))
+    spect_params = preprocess_params["spect_params"]
+
+    dataloader = build_features_dataloader(
+        data_path=str(dataset_path),
+        spect_params=spect_params,
+        cache_root=cache_root,
+        sr=sr,
+        batch_size=batch_size,
+        num_workers=0,
+        shuffle=False,
+        require_cache=require_cache,
+    )
+
+    first_logged = False
+    for batch in tqdm(dataloader, desc="Processing", unit=" batch"):
+        (
+            src_mels,
+            src_mel_lengths,
+            tgt_mels,
+            tgt_mel_lengths,
+            src_paths,
+            tgt_paths,
+        ) = batch
+        if not first_logged:
+            print("First batch details:")
+            print(f"  src_mels shape: {tuple(src_mels.shape)}")
+            print(f"  tgt_mels shape: {tuple(tgt_mels.shape)}")
+            print(f"  src_mel_lengths: {src_mel_lengths.tolist()}")
+            print(f"  tgt_mel_lengths: {tgt_mel_lengths.tolist()}")
+            print(f"  src_paths[0]: {src_paths[0] if src_paths else 'N/A'}")
+            print(f"  tgt_paths[0]: {tgt_paths[0] if tgt_paths else 'N/A'}")
+            first_logged = True
+
+    print("Done.")
+
+
+if __name__ == "__main__":
+    main()

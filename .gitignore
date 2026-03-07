@@ -53,6 +53,7 @@ dist/
 *.spec
 
 # === Project Specific ===
+.cache/
 data/
 checkpoints/
 demo/generated/
