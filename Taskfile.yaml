@@ -13,9 +13,6 @@ tasks:
     cmds:
       - uv run streamlit run apps/dataset_eda/app.py
 
-  prepare-dataset:
-    - uv run python -m scripts.build_polyphony_pairs --max-songs 0 --out-dir data/polyphony-project-dataset-full
-
   process-raw-dataset:
     desc: "Process raw dataset and build train/val CSV splits"
     cmds:
