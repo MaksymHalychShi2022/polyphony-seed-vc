@@ -29,23 +29,31 @@ tasks:
         --val-csv "{{.VAL_DATASET}}"
 
   extract-features:train:
-    desc: "Precompute mel features cache for train split"
+    desc: "Precompute mel + semantic feature cache for train split"
     cmds:
       - >
         uv run python scripts/precompute_mel_features.py
         --dataset "{{.TRAIN_DATASET}}"
         --cache-root "{{.CACHE_DIR}}"
+      - >
+        uv run python scripts/precompute_semantic_features.py
+        --dataset "{{.TRAIN_DATASET}}"
+        --cache-root "{{.CACHE_DIR}}"
 
   extract-features:val:
-    desc: "Precompute mel features cache for val split"
+    desc: "Precompute mel + semantic feature cache for val split"
     cmds:
       - >
         uv run python scripts/precompute_mel_features.py
         --dataset "{{.VAL_DATASET}}"
         --cache-root "{{.CACHE_DIR}}"
+      - >
+        uv run python scripts/precompute_semantic_features.py
+        --dataset "{{.VAL_DATASET}}"
+        --cache-root "{{.CACHE_DIR}}"
 
   extract-features:
-    desc: "Precompute mel features cache for train and val splits"
+    desc: "Precompute mel + semantic feature cache for train and val splits"
     cmds:
       - task extract-features:train
       - task extract-features:val
