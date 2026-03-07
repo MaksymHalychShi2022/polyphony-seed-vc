@@ -7,6 +7,7 @@ import torch
 import yaml
 from tqdm import tqdm
 
+from seed_vc.features.f0 import F0FeatureExtractor
 from seed_vc.features.mel import MelSpectrogramExtractor
 from seed_vc.features.semantic import WhisperFeatureExtractor
 
@@ -87,6 +88,7 @@ class FeaturesDataset(TargetSourcePairsDataset):
         batch_size: int = 1,
         require_cache: bool = True,
         semantic_device: str = "cpu",
+        f0_device: str = "cpu",
     ):
         super().__init__(data_path=data_path, batch_size=batch_size)
         self.require_cache = require_cache
@@ -102,6 +104,11 @@ class FeaturesDataset(TargetSourcePairsDataset):
             device=semantic_device,
             require_cache=require_cache,
         )
+        self.f0_extractor = F0FeatureExtractor(
+            cache_root=cache_root,
+            device=f0_device,
+            require_cache=require_cache,
+        )
 
     def __getitem__(self, idx):
         src_path, tgt_path = super().__getitem__(idx)
@@ -113,11 +120,15 @@ class FeaturesDataset(TargetSourcePairsDataset):
         tgt_semantic = self.semantic_extractor.extract(
             tgt_path, require_cache=self.require_cache
         )
+        src_f0 = self.f0_extractor.extract(src_path, require_cache=self.require_cache)
+        tgt_f0 = self.f0_extractor.extract(tgt_path, require_cache=self.require_cache)
         return (
             src_mel,
             tgt_mel,
             src_semantic,
             tgt_semantic,
+            src_f0,
+            tgt_f0,
             str(src_path),
             str(tgt_path),
         )
@@ -150,6 +161,13 @@ def collate_features(batch):
     src_semantic_lengths = torch.zeros(batch_size).long()
     tgt_semantic_lengths = torch.zeros(batch_size).long()
 
+    max_src_f0_len = max([b[4].shape[0] for b in batch])
+    max_tgt_f0_len = max([b[5].shape[0] for b in batch])
+    src_f0s = torch.zeros((batch_size, max_src_f0_len)).float()
+    tgt_f0s = torch.zeros((batch_size, max_tgt_f0_len)).float()
+    src_f0_lengths = torch.zeros(batch_size).long()
+    tgt_f0_lengths = torch.zeros(batch_size).long()
+
     src_paths = []
     tgt_paths = []
     for bid, (
@@ -157,6 +175,8 @@ def collate_features(batch):
         tgt_mel,
         src_semantic,
         tgt_semantic,
+        src_f0,
+        tgt_f0,
         src_path,
         tgt_path,
     ) in enumerate(batch):
@@ -164,14 +184,20 @@ def collate_features(batch):
         tgt_mel_size = tgt_mel.size(1)
         src_semantic_size = src_semantic.size(0)
         tgt_semantic_size = tgt_semantic.size(0)
+        src_f0_size = src_f0.size(0)
+        tgt_f0_size = tgt_f0.size(0)
         src_mels[bid, :, :src_mel_size] = src_mel
         tgt_mels[bid, :, :tgt_mel_size] = tgt_mel
         src_semantics[bid, :src_semantic_size, :] = src_semantic
         tgt_semantics[bid, :tgt_semantic_size, :] = tgt_semantic
+        src_f0s[bid, :src_f0_size] = src_f0
+        tgt_f0s[bid, :tgt_f0_size] = tgt_f0
         src_mel_lengths[bid] = src_mel_size
         tgt_mel_lengths[bid] = tgt_mel_size
         src_semantic_lengths[bid] = src_semantic_size
         tgt_semantic_lengths[bid] = tgt_semantic_size
+        src_f0_lengths[bid] = src_f0_size
+        tgt_f0_lengths[bid] = tgt_f0_size
         src_paths.append(src_path)
         tgt_paths.append(tgt_path)
 
@@ -184,6 +210,10 @@ def collate_features(batch):
         src_semantic_lengths,
         tgt_semantics,
         tgt_semantic_lengths,
+        src_f0s,
+        src_f0_lengths,
+        tgt_f0s,
+        tgt_f0_lengths,
         src_paths,
         tgt_paths,
     )
@@ -200,6 +230,7 @@ def build_features_dataloader(
     shuffle: bool = True,
     require_cache: bool = True,
     semantic_device: str = "cpu",
+    f0_device: str = "cpu",
 ):
     dataset = FeaturesDataset(
         data_path=data_path,
@@ -210,6 +241,7 @@ def build_features_dataloader(
         batch_size=batch_size,
         require_cache=require_cache,
         semantic_device=semantic_device,
+        f0_device=f0_device,
     )
     return torch.utils.data.DataLoader(
         dataset,
@@ -255,7 +287,7 @@ def build_features_dataloader(
     show_default=True,
     help=(
         "When enabled, fail if cache is missing. "
-        "Disable to compute-and-cache missing mels and semantics while iterating."
+        "Disable to compute-and-cache missing mels, semantics, and f0 while iterating."
     ),
 )
 @click.option(
@@ -265,6 +297,13 @@ def build_features_dataloader(
     type=click.Choice(["cpu", "cuda"]),
     help="Device used for semantic feature extraction when cache is missing.",
 )
+@click.option(
+    "--f0-device",
+    default="cpu",
+    show_default=True,
+    type=click.Choice(["cpu", "cuda"]),
+    help="Device used for f0 feature extraction when cache is missing.",
+)
 def main(
     dataset_path: Path,
     config_path: Path,
@@ -272,6 +311,7 @@ def main(
     cache_root: Path,
     require_cache: bool,
     semantic_device: str,
+    f0_device: str,
 ):
     config = yaml.safe_load(config_path.read_text())
     preprocess_params = config["preprocess_params"]
@@ -296,6 +336,7 @@ def main(
         shuffle=False,
         require_cache=require_cache,
         semantic_device=semantic_device,
+        f0_device=f0_device,
     )
 
     first_logged = False
@@ -309,6 +350,10 @@ def main(
             src_semantic_lengths,
             tgt_semantics,
             tgt_semantic_lengths,
+            src_f0s,
+            src_f0_lengths,
+            tgt_f0s,
+            tgt_f0_lengths,
             src_paths,
             tgt_paths,
         ) = batch
@@ -322,6 +367,10 @@ def main(
             print(f"  tgt_semantics shape: {tuple(tgt_semantics.shape)}")
             print(f"  src_semantic_lengths: {src_semantic_lengths.tolist()}")
             print(f"  tgt_semantic_lengths: {tgt_semantic_lengths.tolist()}")
+            print(f"  src_f0s shape: {tuple(src_f0s.shape)}")
+            print(f"  tgt_f0s shape: {tuple(tgt_f0s.shape)}")
+            print(f"  src_f0_lengths: {src_f0_lengths.tolist()}")
+            print(f"  tgt_f0_lengths: {tgt_f0_lengths.tolist()}")
             print(f"  src_paths[0]: {src_paths[0] if src_paths else 'N/A'}")
             print(f"  tgt_paths[0]: {tgt_paths[0] if tgt_paths else 'N/A'}")
             first_logged = True
