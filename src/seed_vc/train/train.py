@@ -85,12 +85,15 @@ class Trainer:
             )
             self.val_dataloader = None
             self.has_val = False
-        self.f0_condition = config["model_params"]["DiT"].get("f0_condition", False)
+        assert config["model_params"]["DiT"].get("f0_condition", False), (
+            "Singing VC training requires model_params.DiT.f0_condition=true"
+        )
+        assert config["model_params"]["length_regulator"].get("f0_condition", False), (
+            "Singing VC training requires model_params.length_regulator.f0_condition=true"
+        )
         self.build_sv_model(device, config)
         self.build_semantic_fn(device, config)
-        if self.f0_condition:
-            self.build_f0_fn(device, config)
-        self.build_converter(device, config)
+        self.build_f0_fn(device, config)
         self.build_vocoder(device, config)
 
         scheduler_params = {
@@ -181,131 +184,62 @@ class Trainer:
         self.rmvpe = RMVPE(model_path, is_half=False, device=device)
         self.f0_fn = self.rmvpe
 
-    def build_converter(self, device, config):
-        from seed_vc.modules.openvoice.api import ToneColorConverter
-
-        ckpt_converter, config_converter = load_custom_model_from_hf(
-            "myshell-ai/OpenVoiceV2",
-            "converter/checkpoint.pth",
-            "converter/config.json",
-        )
-        self.tone_color_converter = ToneColorConverter(config_converter, device=device)
-        self.tone_color_converter.load_ckpt(ckpt_converter)
-        self.tone_color_converter.model.eval()
-        se_db_path = load_custom_model_from_hf("Plachta/Seed-VC", "se_db.pt", None)
-        self.se_db = torch.load(se_db_path, map_location="cpu")
-
     def build_vocoder(self, device, config):
         vocoder_type = config["model_params"]["vocoder"]["type"]
         vocoder_name = config["model_params"]["vocoder"].get("name", None)
-        if vocoder_type == "bigvgan":
-            from seed_vc.modules.bigvgan import bigvgan
-
-            self.bigvgan_model = bigvgan.BigVGAN.from_pretrained(
-                vocoder_name, use_cuda_kernel=False
-            )
-            self.bigvgan_model.remove_weight_norm()
-            self.bigvgan_model = self.bigvgan_model.eval().to(device)
-            vocoder_fn = self.bigvgan_model
-        elif vocoder_type == "hifigan":
-            from seed_vc.modules.hifigan.f0_predictor import ConvRNNF0Predictor
-            from seed_vc.modules.hifigan.generator import HiFTGenerator
-
-            hift_config = yaml.safe_load(open("configs/hifigan.yml", "r"))
-            hift_path = load_custom_model_from_hf(
-                "FunAudioLLM/CosyVoice-300M", "hift.pt", None
-            )
-            self.hift_gen = HiFTGenerator(
-                **hift_config["hift"],
-                f0_predictor=ConvRNNF0Predictor(**hift_config["f0_predictor"]),
-            )
-            self.hift_gen.load_state_dict(torch.load(hift_path, map_location="cpu"))
-            self.hift_gen.eval()
-            self.hift_gen.to(device)
-            vocoder_fn = self.hift_gen
-        else:
+        if vocoder_type != "bigvgan":
             raise ValueError(f"Unsupported vocoder type: {vocoder_type}")
-        self.vocoder_fn = vocoder_fn
+
+        from seed_vc.modules.bigvgan import bigvgan
+
+        self.bigvgan_model = bigvgan.BigVGAN.from_pretrained(
+            vocoder_name, use_cuda_kernel=False
+        )
+        self.bigvgan_model.remove_weight_norm()
+        self.bigvgan_model = self.bigvgan_model.eval().to(device)
+        self.vocoder_fn = self.bigvgan_model
 
     def build_semantic_fn(self, device, config):
         speech_tokenizer_type = config["model_params"]["speech_tokenizer"].get(
             "type", "cosyvoice"
         )
-        if speech_tokenizer_type == "whisper":
-            from transformers import AutoFeatureExtractor, WhisperModel
-
-            whisper_model_name = config["model_params"]["speech_tokenizer"]["name"]
-            self.whisper_model = WhisperModel.from_pretrained(whisper_model_name).to(
-                device
-            )
-            self.whisper_feature_extractor = AutoFeatureExtractor.from_pretrained(
-                whisper_model_name
-            )
-            # remove decoder to save memory
-            del self.whisper_model.decoder
-
-            def semantic_fn(waves_16k):
-                ori_inputs = self.whisper_feature_extractor(
-                    [w16k.cpu().numpy() for w16k in waves_16k],
-                    return_tensors="pt",
-                    return_attention_mask=True,
-                    sampling_rate=16000,
-                )
-                ori_input_features = self.whisper_model._mask_input_features(
-                    ori_inputs.input_features, attention_mask=ori_inputs.attention_mask
-                ).to(device)
-                with torch.no_grad():
-                    ori_outputs = self.whisper_model.encoder(
-                        ori_input_features.to(self.whisper_model.encoder.dtype),
-                        head_mask=None,
-                        output_attentions=False,
-                        output_hidden_states=False,
-                        return_dict=True,
-                    )
-                S_ori = ori_outputs.last_hidden_state.to(torch.float32)
-                S_ori = S_ori[:, : waves_16k.size(-1) // 320 + 1]
-                return S_ori
-
-        elif speech_tokenizer_type == "xlsr":
-            from transformers import (
-                Wav2Vec2FeatureExtractor,
-                Wav2Vec2Model,
-            )
-
-            model_name = config["model_params"]["speech_tokenizer"]["name"]
-            output_layer = config["model_params"]["speech_tokenizer"]["output_layer"]
-            self.wav2vec_feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(
-                model_name
-            )
-            self.wav2vec_model = Wav2Vec2Model.from_pretrained(model_name)
-            self.wav2vec_model.encoder.layers = self.wav2vec_model.encoder.layers[
-                :output_layer
-            ]
-            self.wav2vec_model = self.wav2vec_model.to(device)
-            self.wav2vec_model = self.wav2vec_model.eval()
-            self.wav2vec_model = self.wav2vec_model.half()
-
-            def semantic_fn(waves_16k):
-                ori_waves_16k_input_list = [
-                    waves_16k[bib].cpu().numpy() for bib in range(len(waves_16k))
-                ]
-                ori_inputs = self.wav2vec_feature_extractor(
-                    ori_waves_16k_input_list,
-                    return_tensors="pt",
-                    return_attention_mask=True,
-                    padding=True,
-                    sampling_rate=16000,
-                ).to(device)
-                with torch.no_grad():
-                    ori_outputs = self.wav2vec_model(
-                        ori_inputs.input_values.half(),
-                    )
-                S_ori = ori_outputs.last_hidden_state.float()
-                return S_ori
-        else:
+        if speech_tokenizer_type != "whisper":
             raise ValueError(
                 f"Unsupported speech tokenizer type: {speech_tokenizer_type}"
             )
+
+        from transformers import AutoFeatureExtractor, WhisperModel
+
+        whisper_model_name = config["model_params"]["speech_tokenizer"]["name"]
+        self.whisper_model = WhisperModel.from_pretrained(whisper_model_name).to(device)
+        self.whisper_feature_extractor = AutoFeatureExtractor.from_pretrained(
+            whisper_model_name
+        )
+        # remove decoder to save memory
+        del self.whisper_model.decoder
+
+        def semantic_fn(waves_16k):
+            ori_inputs = self.whisper_feature_extractor(
+                [w16k.cpu().numpy() for w16k in waves_16k],
+                return_tensors="pt",
+                return_attention_mask=True,
+                sampling_rate=16000,
+            )
+            ori_input_features = self.whisper_model._mask_input_features(
+                ori_inputs.input_features, attention_mask=ori_inputs.attention_mask
+            ).to(device)
+            with torch.no_grad():
+                ori_outputs = self.whisper_model.encoder(
+                    ori_input_features.to(self.whisper_model.encoder.dtype),
+                    head_mask=None,
+                    output_attentions=False,
+                    output_hidden_states=False,
+                    return_dict=True,
+                )
+            S_ori = ori_outputs.last_hidden_state.to(torch.float32)
+            S_ori = S_ori[:, : waves_16k.size(-1) // 320 + 1]
+            return S_ori
+
         self.semantic_fn = semantic_fn
 
     def train_one_step(self, batch, update: bool = True):
@@ -334,11 +268,8 @@ class Trainer:
         S_ori = self.semantic_fn(src_waves_16k)
         S_alt = self.semantic_fn(tgt_waves_16k)
 
-        if self.f0_condition:
-            F0_ori = self.rmvpe.infer_from_audio_batch(src_waves_16k)
-            F0_tgt = self.rmvpe.infer_from_audio_batch(tgt_waves_16k)
-        else:
-            F0_ori, F0_tgt = None, None
+        F0_ori = self.rmvpe.infer_from_audio_batch(src_waves_16k)
+        F0_tgt = self.rmvpe.infer_from_audio_batch(tgt_waves_16k)
 
         # interpolate speech token to match acoustic feature length
         alt_cond, _, alt_codes, alt_commitment_loss, alt_codebook_loss = (
