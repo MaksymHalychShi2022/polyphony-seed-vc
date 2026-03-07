@@ -16,6 +16,16 @@ tasks:
   prepare-dataset:
     - uv run python -m scripts.build_polyphony_pairs --max-songs 0 --out-dir data/polyphony-project-dataset-full
 
+  process-raw-dataset:
+    desc: "Process raw <id>/<stem>.mp3 into chunked FLAC dataset"
+    cmds:
+      - rm -rf "{{.DATASET_PROCESSED}}" | true
+      - >
+        uv run python scripts/process_raw_dataset.py
+        {{.DATASET_RAW}}
+        --max-songs 10
+        --out-dir "{{.DATASET_PROCESSED}}"
+
   train:
     - uv run python -m seed_vc.train.train --dataset data/polyphony-project-dataset-tmp/pairs.csv
 

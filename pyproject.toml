@@ -20,6 +20,9 @@ dependencies = [
     "resemblyzer>=0.1.4",
     "torchcodec>=0.9.1",
     "streamlit>=1.22.0",
+    "pyloudnorm>=0.1.1",
+    "soundfile>=0.12.1",
+    "tqdm>=4.66.0",
 ]
 
 [build-system]
