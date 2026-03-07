@@ -6,6 +6,11 @@ tasks:
   demo:
     - uv run python -m demo.app
 
+  dataset-eda:
+    desc: "Run Streamlit dataset browser for data/raw/videos.json"
+    cmds:
+      - uv run --with streamlit streamlit run apps/dataset_eda/app.py
+
   prepare-dataset:
     - uv run python -m scripts.build_polyphony_pairs --max-songs 0 --out-dir data/polyphony-project-dataset-full
 
