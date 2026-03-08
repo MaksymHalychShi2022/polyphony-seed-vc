@@ -3,17 +3,16 @@ import glob
 import os
 import shutil
 import sys
+from typing import Any, Sequence
 
 import torch
 import torch.multiprocessing as mp
-import torchaudio
-import torchaudio.compliance.kaldi as kaldi
 import yaml
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from seed_vc.modules.commons import build_model, load_checkpoint, recursive_munch
-from seed_vc.train.ft_dataset import build_ft_dataloader
+from seed_vc.train.features_dataset import build_features_dataloader
 from seed_vc.train.optimizers import build_optimizer
 from seed_vc.utils.hf_utils import load_custom_model_from_hf
 
@@ -23,18 +22,21 @@ os.environ["HF_HUB_CACHE"] = "./checkpoints/hf_cache"
 class Trainer:
     def __init__(
         self,
-        config_path,
-        pretrained_ckpt_path,
-        data_dir,
-        run_name,
-        batch_size=0,
-        num_workers=0,
-        steps=1000,
-        save_interval=500,
-        max_epochs=1000,
-        eval_interval=1,
-        device="cuda:0",
-    ):
+        config_path: str,
+        pretrained_ckpt_path: str | None,
+        train_data_path: str,
+        val_data_path: str | None,
+        cache_root: str,
+        run_name: str,
+        batch_size: int = 0,
+        num_workers: int = 0,
+        steps: int = 1000,
+        save_interval: int = 500,
+        max_epochs: int = 1000,
+        eval_interval: int = 1,
+        require_cache: bool = True,
+        device: str = "cuda:0",
+    ) -> None:
         self.device = device
         config = yaml.safe_load(open(config_path))
         self.log_dir = os.path.join(config["log_dir"], run_name)
@@ -61,28 +63,46 @@ class Trainer:
         )
         self.n_fft = config["preprocess_params"]["spect_params"].get("n_fft", 1024)
         preprocess_params = config["preprocess_params"]
+        speech_tokenizer = config["model_params"]["speech_tokenizer"]
+        speech_tokenizer_type = speech_tokenizer.get("type", "cosyvoice")
+        if speech_tokenizer_type != "whisper":
+            raise ValueError(
+                f"Unsupported speech tokenizer type: {speech_tokenizer_type}. Expected 'whisper'."
+            )
+        whisper_model_name = speech_tokenizer["name"]
 
-        self.train_dataloader = build_ft_dataloader(
-            data_dir,
-            preprocess_params["spect_params"],
-            self.sr,
+        self.train_dataloader = build_features_dataloader(
+            data_path=train_data_path,
+            spect_params=preprocess_params["spect_params"],
+            whisper_model_name=whisper_model_name,
+            cache_root=cache_root,
+            sr=self.sr,
             batch_size=batch_size,
             num_workers=num_workers,
+            require_cache=require_cache,
         )
-        try:
-            self.val_dataloader = build_ft_dataloader(
-                data_dir,
-                preprocess_params["spect_params"],
-                self.sr,
-                batch_size=batch_size,
-                num_workers=num_workers,
-                shuffle=False,
-            )
-            self.has_val = True
-        except ValueError:
-            print(
-                "No valid validation data found in dataset CSV; evaluation will be skipped."
-            )
+        if val_data_path:
+            try:
+                self.val_dataloader = build_features_dataloader(
+                    data_path=val_data_path,
+                    spect_params=preprocess_params["spect_params"],
+                    whisper_model_name=whisper_model_name,
+                    cache_root=cache_root,
+                    sr=self.sr,
+                    batch_size=batch_size,
+                    num_workers=num_workers,
+                    shuffle=False,
+                    require_cache=require_cache,
+                )
+                self.has_val = True
+            except ValueError:
+                print(
+                    "No valid validation data found in validation CSV; evaluation will be skipped."
+                )
+                self.val_dataloader = None
+                self.has_val = False
+        else:
+            print("No validation dataset provided; evaluation will be skipped.")
             self.val_dataloader = None
             self.has_val = False
         assert config["model_params"]["DiT"].get("f0_condition", False), (
@@ -91,10 +111,6 @@ class Trainer:
         assert config["model_params"]["length_regulator"].get("f0_condition", False), (
             "Singing VC training requires model_params.length_regulator.f0_condition=true"
         )
-        self.build_sv_model(device, config)
-        self.build_semantic_fn(device, config)
-        self.build_f0_fn(device, config)
-        self.build_vocoder(device, config)
 
         scheduler_params = {
             "warmup_steps": 0,
@@ -162,121 +178,44 @@ class Trainer:
             self.epoch, self.iters = 0, 0
             print("Failed to load any checkpoint, training from scratch.")
 
-    def build_sv_model(self, device, config):
-        from seed_vc.modules.campplus.DTDNN import CAMPPlus
-
-        self.campplus_model = CAMPPlus(feat_dim=80, embedding_size=192)
-        campplus_sd_path = load_custom_model_from_hf(
-            "funasr/campplus", "campplus_cn_common.bin", config_filename=None
-        )
-        campplus_sd = torch.load(campplus_sd_path, map_location="cpu")
-        self.campplus_model.load_state_dict(campplus_sd)
-        self.campplus_model.eval()
-        self.campplus_model.to(device)
-        self.sv_fn = self.campplus_model
-
-    def build_f0_fn(self, device, config):
-        from seed_vc.modules.rmvpe import RMVPE
-
-        model_path = load_custom_model_from_hf(
-            "lj1995/VoiceConversionWebUI", "rmvpe.pt", None
-        )
-        self.rmvpe = RMVPE(model_path, is_half=False, device=device)
-        self.f0_fn = self.rmvpe
-
-    def build_vocoder(self, device, config):
-        vocoder_type = config["model_params"]["vocoder"]["type"]
-        vocoder_name = config["model_params"]["vocoder"].get("name", None)
-        if vocoder_type != "bigvgan":
-            raise ValueError(f"Unsupported vocoder type: {vocoder_type}")
-
-        from seed_vc.modules.bigvgan import bigvgan
-
-        self.bigvgan_model = bigvgan.BigVGAN.from_pretrained(
-            vocoder_name, use_cuda_kernel=False
-        )
-        self.bigvgan_model.remove_weight_norm()
-        self.bigvgan_model = self.bigvgan_model.eval().to(device)
-        self.vocoder_fn = self.bigvgan_model
-
-    def build_semantic_fn(self, device, config):
-        speech_tokenizer_type = config["model_params"]["speech_tokenizer"].get(
-            "type", "cosyvoice"
-        )
-        if speech_tokenizer_type != "whisper":
-            raise ValueError(
-                f"Unsupported speech tokenizer type: {speech_tokenizer_type}"
-            )
-
-        from transformers import AutoFeatureExtractor, WhisperModel
-
-        whisper_model_name = config["model_params"]["speech_tokenizer"]["name"]
-        self.whisper_model = WhisperModel.from_pretrained(whisper_model_name).to(device)
-        self.whisper_feature_extractor = AutoFeatureExtractor.from_pretrained(
-            whisper_model_name
-        )
-        # remove decoder to save memory
-        del self.whisper_model.decoder
-
-        def semantic_fn(waves_16k):
-            ori_inputs = self.whisper_feature_extractor(
-                [w16k.cpu().numpy() for w16k in waves_16k],
-                return_tensors="pt",
-                return_attention_mask=True,
-                sampling_rate=16000,
-            )
-            ori_input_features = self.whisper_model._mask_input_features(
-                ori_inputs.input_features, attention_mask=ori_inputs.attention_mask
-            ).to(device)
-            with torch.no_grad():
-                ori_outputs = self.whisper_model.encoder(
-                    ori_input_features.to(self.whisper_model.encoder.dtype),
-                    head_mask=None,
-                    output_attentions=False,
-                    output_hidden_states=False,
-                    return_dict=True,
-                )
-            S_ori = ori_outputs.last_hidden_state.to(torch.float32)
-            S_ori = S_ori[:, : waves_16k.size(-1) // 320 + 1]
-            return S_ori
-
-        self.semantic_fn = semantic_fn
-
-    def train_one_step(self, batch, update: bool = True):
+    def train_one_step(self, batch: Sequence[Any], update: bool = True) -> float:
         (
-            src_waves,
             _src_mels,
-            src_wave_lengths,
-            _src_mel_input_length,
-            tgt_waves,
+            _src_mel_lengths,
             tgt_mels,
-            tgt_wave_lengths,
-            tgt_mel_input_length,
+            tgt_mel_lengths,
+            src_semantics,
+            _src_semantic_lengths,
+            tgt_semantics,
+            _tgt_semantic_lengths,
+            src_f0s,
+            _src_f0_lengths,
+            tgt_f0s,
+            _tgt_f0_lengths,
+            tgt_embeddings,
+            _src_paths,
+            _tgt_paths,
         ) = batch
 
-        B = src_waves.size(0)
+        B = tgt_mels.size(0)
         target_size = tgt_mels.size(2)
         target = tgt_mels
-        target_lengths = tgt_mel_input_length
-
-        src_waves_16k = torchaudio.functional.resample(src_waves, self.sr, 16000)
-        tgt_waves_16k = torchaudio.functional.resample(tgt_waves, self.sr, 16000)
-        # src_wave_lengths_16k = (src_wave_lengths.float() * 16000 / self.sr).long()
-        tgt_wave_lengths_16k = (tgt_wave_lengths.float() * 16000 / self.sr).long()
-
-        # extract semantic tokens for source (content) and target (style)
-        S_ori = self.semantic_fn(src_waves_16k)
-        S_alt = self.semantic_fn(tgt_waves_16k)
-
-        F0_ori = self.rmvpe.infer_from_audio_batch(src_waves_16k)
-        F0_tgt = self.rmvpe.infer_from_audio_batch(tgt_waves_16k)
+        target_lengths = tgt_mel_lengths
 
         # interpolate speech token to match acoustic feature length
-        alt_cond, _, alt_codes, alt_commitment_loss, alt_codebook_loss = (
-            self.model.length_regulator(S_alt, ylens=target_lengths, f0=F0_tgt)
+        alt_cond, _, _, alt_commitment_loss, alt_codebook_loss = (
+            self.model.length_regulator(
+                tgt_semantics,
+                ylens=target_lengths,
+                f0=tgt_f0s,
+            )
         )
-        ori_cond, _, ori_codes, ori_commitment_loss, ori_codebook_loss = (
-            self.model.length_regulator(S_ori, ylens=target_lengths, f0=F0_ori)
+        ori_cond, _, _, ori_commitment_loss, ori_codebook_loss = (
+            self.model.length_regulator(
+                src_semantics,
+                ylens=target_lengths,
+                f0=src_f0s,
+            )
         )
         if alt_commitment_loss is None:
             alt_commitment_loss = 0
@@ -303,23 +242,7 @@ class Trainer:
         target_lengths = torch.clamp(target_lengths, max=common_min_len)
         x = target
 
-        # style vectors are extracted from the prompt only
-        feat_list = []
-        for bib in range(B):
-            feat = kaldi.fbank(
-                tgt_waves_16k[bib : bib + 1, : tgt_wave_lengths_16k[bib]],
-                num_mel_bins=80,
-                dither=0,
-                sample_frequency=16000,
-            )
-            feat = feat - feat.mean(dim=0, keepdim=True)
-            feat_list.append(feat)
-        y_list = []
-        with torch.no_grad():
-            for feat in feat_list:
-                y = self.sv_fn(feat.unsqueeze(0))
-                y_list.append(y)
-        y = torch.cat(y_list, dim=0)
+        y = tgt_embeddings.to(torch.float32)
 
         loss, _ = self.model.cfm(x, target_lengths, prompt_len, cond, y)
 
@@ -343,10 +266,13 @@ class Trainer:
 
         return loss.detach().item()
 
-    def train_one_epoch(self):
+    def move_batch_to_device(self, batch: Sequence[Any]) -> list[Any]:
+        return [b.to(self.device) if torch.is_tensor(b) else b for b in batch]
+
+    def train_one_epoch(self) -> None:
         _ = [self.model[key].train() for key in self.model]
         for i, batch in enumerate(tqdm(self.train_dataloader)):
-            batch = [b.to(self.device) for b in batch]
+            batch = self.move_batch_to_device(batch)
             loss = self.train_one_step(batch)
             self.ema_loss = (
                 self.ema_loss * self.loss_smoothing_rate
@@ -384,7 +310,7 @@ class Trainer:
                     for cp in checkpoints[:-2]:
                         os.remove(cp)
 
-    def evaluate(self):
+    def evaluate(self) -> float | None:
         if not self.has_val or self.val_dataloader is None:
             return None
         _ = [self.model[key].eval() for key in self.model]
@@ -392,7 +318,7 @@ class Trainer:
         n_batches = 0
         with torch.no_grad():
             for batch in self.val_dataloader:
-                batch = [b.to(self.device) for b in batch]
+                batch = self.move_batch_to_device(batch)
                 loss = self.train_one_step(batch, update=False)
                 total_loss += loss
                 n_batches += 1
@@ -403,7 +329,7 @@ class Trainer:
         _ = [self.model[key].train() for key in self.model]
         return avg_loss
 
-    def train(self):
+    def train(self) -> None:
         self.ema_loss = 0
         self.loss_smoothing_rate = 0.99
         for epoch in range(self.n_epochs):
@@ -427,11 +353,17 @@ class Trainer:
         print(f"Final model saved at {save_path}")
 
 
-def main(args):
+def main(args: argparse.Namespace) -> None:
+    train_data_path = args.train_dataset or args.dataset
+    if not train_data_path:
+        raise ValueError("Provide --train-dataset (or legacy --dataset) for training.")
+
     trainer = Trainer(
         config_path=args.config,
         pretrained_ckpt_path=args.pretrained_ckpt,
-        data_dir=args.dataset,
+        train_data_path=train_data_path,
+        val_data_path=args.val_dataset,
+        cache_root=args.cache_root,
         run_name=args.run_name,
         batch_size=args.batch_size,
         steps=args.max_steps,
@@ -439,6 +371,7 @@ def main(args):
         save_interval=args.save_every,
         num_workers=args.num_workers,
         eval_interval=args.eval_every,
+        require_cache=args.require_cache,
         device=args.device,
     )
     trainer.train()
@@ -456,7 +389,39 @@ if __name__ == "__main__":
         default="configs/presets/config_dit_mel_seed_uvit_whisper_base_f0_44k.yml",
     )
     parser.add_argument("--pretrained-ckpt", type=str, default=None)
-    parser.add_argument("--dataset", type=str, default="data/dataset.csv")
+    parser.add_argument(
+        "--train-dataset",
+        type=str,
+        default=None,
+        help="Path to training CSV with source,target rows.",
+    )
+    parser.add_argument(
+        "--val-dataset",
+        type=str,
+        default=None,
+        help="Optional path to validation CSV with source,target rows.",
+    )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default=None,
+        help="Legacy alias for --train-dataset.",
+    )
+    parser.add_argument(
+        "--cache-root",
+        type=str,
+        default=".cache",
+        help="Root cache directory. Features are loaded from <cache-root>/features/.",
+    )
+    parser.add_argument(
+        "--require-cache",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Require all feature cache files to exist. "
+            "Use --no-require-cache to allow computing missing features on the fly."
+        ),
+    )
     parser.add_argument("--run-name", type=str, default="my_run")
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--max-steps", type=int, default=1000)

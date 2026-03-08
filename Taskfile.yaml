@@ -91,7 +91,13 @@ tasks:
         --cache-root "{{.CACHE_DIR}}"
 
   train:
-    - uv run python -m seed_vc.train.train --dataset data/polyphony-project-dataset-tmp/pairs.csv
+    desc: "Train using precomputed cached features"
+    cmds:
+      - >
+        uv run python -m seed_vc.train.train
+        --train-dataset "{{.TRAIN_DATASET}}"
+        --val-dataset "{{.VAL_DATASET}}"
+        --cache-root "{{.CACHE_DIR}}"
 
   tensorboard:
     - uv run python -m tensorboard.main --logdir runs
