@@ -11,9 +11,9 @@ import yaml
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from seed_vc.modules.commons import build_model, load_checkpoint, recursive_munch
 from seed_vc.train.features_dataset import build_features_dataloader
 from seed_vc.train.optimizers import build_optimizer
+from seed_vc.train.seed_vc_model import SeedVCModel
 from seed_vc.utils.hf_utils import load_custom_model_from_hf
 
 os.environ["HF_HUB_CACHE"] = "./checkpoints/hf_cache"
@@ -22,8 +22,8 @@ os.environ["HF_HUB_CACHE"] = "./checkpoints/hf_cache"
 class Trainer:
     def __init__(
         self,
+        model: SeedVCModel,
         config_path: str,
-        pretrained_ckpt_path: str | None,
         train_data_path: str,
         val_data_path: str | None,
         cache_root: str,
@@ -117,66 +117,15 @@ class Trainer:
             "base_lr": 0.00001,
         }
 
-        self.model_params = recursive_munch(config["model_params"])
-        self.model = build_model(self.model_params, stage="DiT")
-
-        _ = [self.model[key].to(device) for key in self.model]
-        self.model.cfm.estimator.setup_caches(
-            max_batch_size=batch_size, max_seq_length=8192
-        )
+        self.model = model.to(device)
+        self.model.setup_caches(max_batch_size=batch_size, max_seq_length=8192)
 
         # initialize optimizers after preparing models for compatibility with FSDP
         self.optimizer = build_optimizer(
-            {key: self.model[key] for key in self.model},
+            self.model.components(),
             lr=float(scheduler_params["base_lr"]),
         )
-
-        if pretrained_ckpt_path is None:
-            # find latest checkpoint
-            available_checkpoints = glob.glob(
-                os.path.join(self.log_dir, "DiT_epoch_*_step_*.pth")
-            )
-            if len(available_checkpoints) > 0:
-                latest_checkpoint = max(
-                    available_checkpoints,
-                    key=lambda x: int(x.split("_")[-1].split(".")[0]),
-                )
-                earliest_checkpoint = min(
-                    available_checkpoints,
-                    key=lambda x: int(x.split("_")[-1].split(".")[0]),
-                )
-                # delete the earliest checkpoint if we have more than 2
-                if (
-                    earliest_checkpoint != latest_checkpoint
-                    and len(available_checkpoints) > 2
-                ):
-                    os.remove(earliest_checkpoint)
-                    print(f"Removed {earliest_checkpoint}")
-            elif config.get("pretrained_model", ""):
-                latest_checkpoint = load_custom_model_from_hf(
-                    "Plachta/Seed-VC", config["pretrained_model"], None
-                )
-            else:
-                latest_checkpoint = ""
-        else:
-            assert os.path.exists(pretrained_ckpt_path), (
-                f"Pretrained checkpoint {pretrained_ckpt_path} not found"
-            )
-            latest_checkpoint = pretrained_ckpt_path
-
-        if os.path.exists(latest_checkpoint):
-            self.model, self.optimizer, self.epoch, self.iters = load_checkpoint(
-                self.model,
-                self.optimizer,
-                latest_checkpoint,
-                load_only_params=True,
-                ignore_modules=[],
-                is_distributed=False,
-            )
-            print(f"Loaded checkpoint from {latest_checkpoint}")
-        else:
-            self.epoch, self.iters = 0, 0
-            print("Failed to load any checkpoint, training from scratch.")
+        self.epoch, self.iters = 0, 0
 
     def train_one_step(self, batch: Sequence[Any], update: bool = True) -> float:
         (
@@ -270,7 +219,7 @@ class Trainer:
         return [b.to(self.device) if torch.is_tensor(b) else b for b in batch]
 
     def train_one_epoch(self) -> None:
-        _ = [self.model[key].train() for key in self.model]
+        self.model.train()
         for i, batch in enumerate(tqdm(self.train_dataloader)):
             batch = self.move_batch_to_device(batch)
             loss = self.train_one_step(batch)
@@ -290,18 +239,11 @@ class Trainer:
 
             if self.iters % self.save_interval == 0:
                 print("Saving..")
-                state = {
-                    "net": {key: self.model[key].state_dict() for key in self.model},
-                    "optimizer": self.optimizer.state_dict(),
-                    "scheduler": self.optimizer.scheduler_state_dict(),
-                    "iters": self.iters,
-                    "epoch": self.epoch,
-                }
                 save_path = os.path.join(
                     self.log_dir,
                     f"DiT_epoch_{self.epoch:05d}_step_{self.iters:05d}.pth",
                 )
-                torch.save(state, save_path)
+                self.save_state(save_path)
 
                 # find all checkpoints and remove old ones
                 checkpoints = glob.glob(os.path.join(self.log_dir, "DiT_epoch_*.pth"))
@@ -313,7 +255,7 @@ class Trainer:
     def evaluate(self) -> float | None:
         if not self.has_val or self.val_dataloader is None:
             return None
-        _ = [self.model[key].eval() for key in self.model]
+        self.model.eval()
         total_loss = 0.0
         n_batches = 0
         with torch.no_grad():
@@ -326,7 +268,7 @@ class Trainer:
         if avg_loss is not None:
             self.writer.add_scalar("eval/loss", avg_loss, self.iters)
             self.writer.flush()
-        _ = [self.model[key].train() for key in self.model]
+        self.model.train()
         return avg_loss
 
     def train(self) -> None:
@@ -343,14 +285,36 @@ class Trainer:
                 break
 
         print("Saving final model..")
-        state = {
-            "net": {key: self.model[key].state_dict() for key in self.model},
-        }
         os.makedirs(self.log_dir, exist_ok=True)
         save_path = os.path.join(self.log_dir, "ft_model.pth")
-        torch.save(state, save_path)
+        self.model.save_weights(save_path)
         self.writer.close()
         print(f"Final model saved at {save_path}")
+
+    def save_state(self, path: str) -> None:
+        state = {
+            "net": self.model.state_dict_for_checkpoint(),
+            "optimizer": self.optimizer.state_dict(),
+            "scheduler": self.optimizer.scheduler_state_dict(),
+            "iters": self.iters,
+            "epoch": self.epoch,
+        }
+        torch.save(state, path)
+
+    def load_state(self, path: str) -> None:
+        state = torch.load(path, map_location="cpu")
+        checkpoint_net = state["net"] if "net" in state else state
+        self.model.load_state_dict_from_checkpoint(
+            checkpoint_net,
+            ignore_modules=[],
+            is_distributed=False,
+        )
+        if "optimizer" in state:
+            self.optimizer.load_state_dict(state["optimizer"])
+        if "scheduler" in state:
+            self.optimizer.load_scheduler_state_dict(state["scheduler"])
+        self.iters = int(state.get("iters", 0))
+        self.epoch = int(state.get("epoch", 0))
 
 
 def main(args: argparse.Namespace) -> None:
@@ -358,9 +322,56 @@ def main(args: argparse.Namespace) -> None:
     if not train_data_path:
         raise ValueError("Provide --train-dataset (or legacy --dataset) for training.")
 
+    config = yaml.safe_load(open(args.config))
+    log_dir = os.path.join(config["log_dir"], args.run_name)
+    os.makedirs(log_dir, exist_ok=True)
+
+    model = SeedVCModel(config["model_params"])
+
+    latest_checkpoint: str = ""
+    if args.pretrained_ckpt is None:
+        available_checkpoints = glob.glob(
+            os.path.join(log_dir, "DiT_epoch_*_step_*.pth")
+        )
+        if len(available_checkpoints) > 0:
+            latest_checkpoint = max(
+                available_checkpoints,
+                key=lambda x: int(x.split("_")[-1].split(".")[0]),
+            )
+            earliest_checkpoint = min(
+                available_checkpoints,
+                key=lambda x: int(x.split("_")[-1].split(".")[0]),
+            )
+            if (
+                earliest_checkpoint != latest_checkpoint
+                and len(available_checkpoints) > 2
+            ):
+                os.remove(earliest_checkpoint)
+                print(f"Removed {earliest_checkpoint}")
+        elif config.get("pretrained_model", ""):
+            hf_checkpoint = load_custom_model_from_hf(
+                "Plachta/Seed-VC", config["pretrained_model"], None
+            )
+            latest_checkpoint = (
+                hf_checkpoint if isinstance(hf_checkpoint, str) else hf_checkpoint[0]
+            )
+        else:
+            latest_checkpoint = ""
+    else:
+        assert os.path.exists(args.pretrained_ckpt), (
+            f"Pretrained checkpoint {args.pretrained_ckpt} not found"
+        )
+        latest_checkpoint = str(args.pretrained_ckpt)
+
+    if os.path.exists(str(latest_checkpoint)):
+        model.load_weights(str(latest_checkpoint))
+        print(f"Loaded checkpoint from {latest_checkpoint}")
+    else:
+        print("Failed to load any checkpoint, training from scratch.")
+
     trainer = Trainer(
+        model=model,
         config_path=args.config,
-        pretrained_ckpt_path=args.pretrained_ckpt,
         train_data_path=train_data_path,
         val_data_path=args.val_dataset,
         cache_root=args.cache_root,
