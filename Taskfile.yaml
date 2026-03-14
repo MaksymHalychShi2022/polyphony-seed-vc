@@ -103,21 +103,16 @@ tasks:
     - uv run python -m tensorboard.main --logdir runs
 
   eval:
-    desc: "Generate conversions and compute Resemblyzer similarity."
+    desc: "Run eval with FeaturesDataset + SeedVCModel."
     vars:
-      DATASET: data/polyphony-project-dataset-tmp/pairs.csv
-      CONFIG: runs/my_run_longest/config_dit_mel_seed_uvit_whisper_base_f0_44k.yml
-      CHECKPOINT: "checkpoints/models--Plachta--Seed-VC/snapshots/257283f9f41585055e8f858fba4fd044e5caed6e/DiT_seed_v2_uvit_whisper_base_f0_44k_bigvgan_pruned_ft_ema.pth"
-      NO_GENERATE: "false"
-      EXTRA_ARGS: ""
-    preconditions:
-      - sh: '[[ "{{.NO_GENERATE}}" == "true" || -n "{{.CHECKPOINT}}" ]]'
-        msg: "Provide CHECKPOINT=/path/to/ckpt.pth or set NO_GENERATE=true to skip generation."
+      DATASET: "{{.VAL_DATASET}}"
+      CACHE_ROOT: "{{.CACHE_DIR}}"
+      CONFIG: configs/presets/config_dit_mel_seed_uvit_whisper_base_f0_44k.yml
+      CHECKPOINT: runs/my_run/DiT_epoch_00007_step_00800.pth
     cmds:
       - >
         uv run python -m seed_vc.train.eval
         --dataset {{.DATASET}}
+        --cache-root {{.CACHE_ROOT}}
         --config {{.CONFIG}}
         {{if ne .CHECKPOINT ""}}--checkpoint {{.CHECKPOINT}}{{end}}
-        {{if eq .NO_GENERATE "true"}}--no-generate{{end}}
-        {{.EXTRA_ARGS}}
