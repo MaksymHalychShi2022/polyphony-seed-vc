@@ -33,3 +33,30 @@ Pull multitrack songs from Hugging Face, mix them, and emit per-chunk `(source,t
 ```bash
 task prepare-dataset
 ```
+
+Evaluation results on base checkpoint:
+Resemblyzer cosine similarity -> mean: 0.7514, median: 0.7556, std: 0.0400, min: 0.6661, max: 0.8223
+
+Evaluation results on finetuned checkpoint:
+Resemblyzer cosine similarity -> mean: 0.8342, median: 0.8342, std: 0.0259, min: 0.7490, max: 0.8727
+
+## Staged evaluation workflow
+
+The evaluation command now supports resumable stages:
+
+```bash
+uv run python -m eval.cli --stage generate-results --dataset data/val.csv
+uv run python -m eval.cli --stage compute-metrics --dataset data/val.csv
+uv run python -m eval.cli --stage build-report --dataset data/val.csv
+```
+
+Run all stages end-to-end:
+
+```bash
+uv run python -m eval.cli --stage all --dataset data/val.csv
+```
+
+Default artifacts are written under `.eval_cache/<timestamp>/`:
+- `results_manifest.json`
+- `metrics_manifest.json`
+- `evaluation_report.html`

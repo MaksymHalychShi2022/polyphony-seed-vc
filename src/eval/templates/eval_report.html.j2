@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Seed-VC Evaluation Report</title>
+  <style>
+    :root {
+      --bg: #f6f3ef;
+      --panel: #fffdf8;
+      --ink: #1f2a37;
+      --muted: #6b7280;
+      --accent: #0f766e;
+      --line: #d6d3d1;
+      --bad: #b91c1c;
+    }
+    body {
+      margin: 0;
+      font-family: "Source Sans 3", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: radial-gradient(circle at top, #efe8dc 0%, var(--bg) 40%, #f7f4ef 100%);
+    }
+    .wrap {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    .hero {
+      background: linear-gradient(120deg, #fef3c7, #ecfeff);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px;
+      margin-bottom: 16px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+    }
+    .hero h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      letter-spacing: 0.02em;
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 14px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+    }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+    }
+    .card .label {
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .card .value {
+      font-size: 24px;
+      font-weight: 700;
+      margin-top: 4px;
+    }
+    .controls {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-items: end;
+      margin-bottom: 12px;
+    }
+    .controls label {
+      display: flex;
+      flex-direction: column;
+      font-size: 13px;
+      color: var(--muted);
+      gap: 4px;
+    }
+    select, input {
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      font-size: 14px;
+      min-width: 120px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    thead {
+      background: #f3f4f6;
+    }
+    th, td {
+      padding: 10px;
+      border-bottom: 1px solid #ebe7df;
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+    th {
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #374151;
+    }
+    tr.hidden {
+      display: none;
+    }
+    .metric {
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .metric.na {
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .status {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    .status.error {
+      color: var(--bad);
+    }
+    audio {
+      width: 180px;
+      max-width: 100%;
+      display: block;
+    }
+    @media (max-width: 900px) {
+      .wrap {
+        padding: 12px;
+      }
+      th, td {
+        padding: 8px;
+      }
+      audio {
+        width: 140px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <h1>Seed-VC Evaluation Report</h1>
+      <div class="meta">
+        <span>Generated: {{ generated_at }}</span>
+        <span>Metric: {{ metric_name }}</span>
+      </div>
+    </section>
+
+    <section class="cards">
+      <article class="card">
+        <div class="label">Mean {{ metric_name }}</div>
+        <div class="value">{{ "%.4f"|format(mean_metric) if mean_metric is not none else "N/A" }}</div>
+      </article>
+      <article class="card">
+        <div class="label">Total rows</div>
+        <div class="value">{{ total_rows }}</div>
+      </article>
+      <article class="card">
+        <div class="label">Rows with metric</div>
+        <div class="value">{{ scored_rows }}</div>
+      </article>
+      <article class="card">
+        <div class="label">Rows with issues</div>
+        <div class="value">{{ failed_rows }}</div>
+      </article>
+    </section>
+
+    <section class="controls">
+      <label>
+        Sort by metric
+        <select id="sortOrder">
+          <option value="desc">High to low</option>
+          <option value="asc">Low to high</option>
+          <option value="none">Original order</option>
+        </select>
+      </label>
+      <label>
+        Min metric
+        <input id="minMetric" type="number" step="0.0001" placeholder="e.g. 0.7000">
+      </label>
+      <label>
+        Max metric
+        <input id="maxMetric" type="number" step="0.0001" placeholder="e.g. 0.9500">
+      </label>
+      <button id="clearFilters" type="button">Reset</button>
+      <span id="visibleCount" class="status"></span>
+    </section>
+
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Metric</th>
+          <th>Source</th>
+          <th>Target</th>
+          <th>Generated</th>
+        </tr>
+      </thead>
+      <tbody id="rows">
+      {% for row in rows %}
+        <tr data-order="{{ loop.index0 }}" data-metric="{{ row.metric_value if row.metric_value is not none else '' }}">
+          <td>{{ loop.index }}</td>
+          <td>
+            <div class="metric{% if row.metric_value is none %} na{% endif %}">{{ row.metric_display }}</div>
+            <div class="status{% if row.error %} error{% endif %}">
+              generation={{ row.generation_status }}, metric={{ row.metric_status }}
+              {% if row.error %}<br>{{ row.error }}{% endif %}
+            </div>
+          </td>
+          <td>
+            <audio controls preload="none" src="{{ row.source_path }}"></audio>
+          </td>
+          <td>
+            <audio controls preload="none" src="{{ row.target_path }}"></audio>
+          </td>
+          <td>
+            <audio controls preload="none" src="{{ row.generated_path }}"></audio>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    const tbody = document.getElementById('rows');
+    const sortOrder = document.getElementById('sortOrder');
+    const minMetric = document.getElementById('minMetric');
+    const maxMetric = document.getElementById('maxMetric');
+    const clearFilters = document.getElementById('clearFilters');
+    const visibleCount = document.getElementById('visibleCount');
+    const allRows = Array.from(tbody.querySelectorAll('tr'));
+
+    function parseMetric(row) {
+      const raw = row.dataset.metric;
+      if (raw === '') return null;
+      const parsed = Number(raw);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function renderRows(rows) {
+      tbody.innerHTML = '';
+      rows.forEach((row) => tbody.appendChild(row));
+    }
+
+    function applyControls() {
+      const minVal = minMetric.value === '' ? null : Number(minMetric.value);
+      const maxVal = maxMetric.value === '' ? null : Number(maxMetric.value);
+      const filtered = allRows.filter((row) => {
+        const score = parseMetric(row);
+        if (score === null) return false;
+        if (minVal !== null && score < minVal) return false;
+        if (maxVal !== null && score > maxVal) return false;
+        return true;
+      });
+
+      if (sortOrder.value !== 'none') {
+        filtered.sort((a, b) => {
+          const av = parseMetric(a);
+          const bv = parseMetric(b);
+          if (av === null && bv === null) return 0;
+          if (av === null) return 1;
+          if (bv === null) return -1;
+          return sortOrder.value === 'asc' ? av - bv : bv - av;
+        });
+      } else {
+        filtered.sort((a, b) => Number(a.dataset.order) - Number(b.dataset.order));
+      }
+
+      renderRows(filtered);
+      visibleCount.textContent = `Showing ${filtered.length} / ${allRows.length} rows with valid metrics`;
+    }
+
+    sortOrder.addEventListener('change', applyControls);
+    minMetric.addEventListener('input', applyControls);
+    maxMetric.addEventListener('input', applyControls);
+    clearFilters.addEventListener('click', () => {
+      sortOrder.value = 'desc';
+      minMetric.value = '';
+      maxMetric.value = '';
+      applyControls();
+    });
+
+    applyControls();
+  </script>
+</body>
+</html>

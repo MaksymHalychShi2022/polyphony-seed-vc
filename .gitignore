@@ -59,4 +59,7 @@ checkpoints/
 demo/generated/
 runs/
 
+openspec
+.opencode
+
 TODO

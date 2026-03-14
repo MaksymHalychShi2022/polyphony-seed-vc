@@ -20,7 +20,7 @@ tasks:
       - >
         uv run python scripts/process_raw_dataset.py
         {{.DATASET_RAW}}
-        --max-songs 10
+        --max-songs 100
         --out-dir "{{.DATASET_PROCESSED}}"
       - >
         uv run python scripts/build_train_val_csv.py
@@ -111,7 +111,7 @@ tasks:
       CHECKPOINT: runs/my_run/DiT_epoch_00007_step_00800.pth
     cmds:
       - >
-        uv run python -m seed_vc.train.eval
+        uv run python -m eval.cli
         --dataset {{.DATASET}}
         --cache-root {{.CACHE_ROOT}}
         --config {{.CONFIG}}
