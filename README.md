@@ -24,7 +24,16 @@ speakerB/utt2.wav,common_target.wav
 
 - Supported extensions: `wav`, `mp3`, `flac`, `ogg`, `m4a`, `opus`.
 - Audio length must be between 1s and 30s; anything outside is skipped.
-- The CSV path itself is passed as `--dataset-dir`; e.g. `python -m seed_vc.train.train --dataset-dir data/pairs.csv`.
+- The CSV path is passed as `--train-dataset`; e.g. `python -m seed_vc.train.train --train-dataset data/pairs.csv --run-name my_run`.
+
+### Training logger contract
+
+- `Trainer` now receives an injected `TrainLogger` instance (constructed in `seed_vc.train.train.main`).
+- Text logs from training are mirrored to terminal and `<log_dir>/<run_name>/train.log`.
+- Metrics emitted from trainer go through `TrainLogger.metric(...)` and are always written to TensorBoard.
+- Remote MLflow logging is enabled only when `MLFLOW_TRACKING_URI` is set; otherwise MLflow is skipped entirely.
+- When MLflow is enabled, the logger uses the existing run folder name (`run_name`) as the MLflow experiment and run name.
+- Progress bar lifecycle is managed by `TrainLogger.progress(...)`.
 
 ### Building pairs from the Polyphony Project (multitrack HF dataset)
 

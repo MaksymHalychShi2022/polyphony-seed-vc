@@ -1,17 +1,15 @@
 import argparse
 import glob
 import os
-import shutil
 import sys
 from typing import Any, Sequence
 
 import torch
 import torch.multiprocessing as mp
 import yaml
-from torch.utils.tensorboard import SummaryWriter
-from tqdm import tqdm
 
 from seed_vc.train.features_dataset import build_features_dataloader
+from seed_vc.train.logger import TrainLogger
 from seed_vc.train.optimizers import build_optimizer
 from seed_vc.train.seed_vc_model import SeedVCModel
 from seed_vc.utils.hf_utils import load_custom_model_from_hf
@@ -27,7 +25,7 @@ class Trainer:
         train_data_path: str,
         val_data_path: str | None,
         cache_root: str,
-        run_name: str,
+        logger: TrainLogger,
         batch_size: int = 0,
         num_workers: int = 0,
         steps: int = 1000,
@@ -38,14 +36,9 @@ class Trainer:
         device: str = "cuda:0",
     ) -> None:
         self.device = device
+        self.logger = logger
         config = yaml.safe_load(open(config_path))
-        self.log_dir = os.path.join(config["log_dir"], run_name)
-        os.makedirs(self.log_dir, exist_ok=True)
-        self.writer = SummaryWriter(self.log_dir)
-        # copy config file to log dir
-        shutil.copyfile(
-            config_path, os.path.join(self.log_dir, os.path.basename(config_path))
-        )
+        self.log_dir = str(self.logger.experiment_dir)
         batch_size = config.get("batch_size", 10) if batch_size == 0 else batch_size
         self.max_steps = steps
 
@@ -96,13 +89,15 @@ class Trainer:
                 )
                 self.has_val = True
             except ValueError:
-                print(
+                self.logger.warning(
                     "No valid validation data found in validation CSV; evaluation will be skipped."
                 )
                 self.val_dataloader = None
                 self.has_val = False
         else:
-            print("No validation dataset provided; evaluation will be skipped.")
+            self.logger.warning(
+                "No validation dataset provided; evaluation will be skipped."
+            )
             self.val_dataloader = None
             self.has_val = False
         assert config["model_params"]["DiT"].get("f0_condition", False), (
@@ -220,7 +215,12 @@ class Trainer:
 
     def train_one_epoch(self) -> None:
         self.model.train()
-        for i, batch in enumerate(tqdm(self.train_dataloader)):
+        self.logger.progress(
+            total=len(self.train_dataloader),
+            desc=f"Epoch {self.epoch + 1}",
+            advance=0,
+        )
+        for batch in self.train_dataloader:
             batch = self.move_batch_to_device(batch)
             loss = self.train_one_step(batch)
             self.ema_loss = (
@@ -230,15 +230,15 @@ class Trainer:
                 else loss
             )
             if self.iters % self.log_interval == 0:
-                self.writer.add_scalar("train/loss", self.ema_loss, self.iters)
-                self.writer.flush()
+                self.logger.metric("loss", self.ema_loss, self.iters, context="train")
             self.iters += 1
+            self.logger.progress()
 
             if self.iters >= self.max_steps:
                 break
 
             if self.iters % self.save_interval == 0:
-                print("Saving..")
+                self.logger.info("Saving checkpoint")
                 save_path = os.path.join(
                     self.log_dir,
                     f"DiT_epoch_{self.epoch:05d}_step_{self.iters:05d}.pth",
@@ -251,6 +251,7 @@ class Trainer:
                     checkpoints.sort(key=lambda x: int(x.split("_")[-1].split(".")[0]))
                     for cp in checkpoints[:-2]:
                         os.remove(cp)
+        self.logger.progress(close=True)
 
     def evaluate(self) -> float | None:
         if not self.has_val or self.val_dataloader is None:
@@ -266,8 +267,7 @@ class Trainer:
                 n_batches += 1
         avg_loss = (total_loss / n_batches) if n_batches > 0 else None
         if avg_loss is not None:
-            self.writer.add_scalar("eval/loss", avg_loss, self.iters)
-            self.writer.flush()
+            self.logger.metric("loss", avg_loss, self.iters, context="eval")
         self.model.train()
         return avg_loss
 
@@ -280,16 +280,15 @@ class Trainer:
             if (epoch + 1) % self.eval_interval == 0 and self.has_val:
                 eval_loss = self.evaluate()
                 if eval_loss is not None:
-                    print(f"Eval loss at epoch {epoch + 1}: {eval_loss:.4f}")
+                    self.logger.info(f"Eval loss at epoch {epoch + 1}: {eval_loss:.4f}")
             if self.iters >= self.max_steps:
                 break
 
-        print("Saving final model..")
+        self.logger.info("Saving final model")
         os.makedirs(self.log_dir, exist_ok=True)
         save_path = os.path.join(self.log_dir, "ft_model.pth")
         self.model.save_weights(save_path)
-        self.writer.close()
-        print(f"Final model saved at {save_path}")
+        self.logger.info(f"Final model saved at {save_path}")
 
     def save_state(self, path: str) -> None:
         state = {
@@ -324,7 +323,8 @@ def main(args: argparse.Namespace) -> None:
 
     config = yaml.safe_load(open(args.config))
     log_dir = os.path.join(config["log_dir"], args.run_name)
-    os.makedirs(log_dir, exist_ok=True)
+    logger = TrainLogger(experiment_dir=log_dir)
+    logger.save_artifact(args.config)
 
     model = SeedVCModel(config["model_params"])
 
@@ -347,7 +347,7 @@ def main(args: argparse.Namespace) -> None:
                 and len(available_checkpoints) > 2
             ):
                 os.remove(earliest_checkpoint)
-                print(f"Removed {earliest_checkpoint}")
+                logger.info(f"Removed {earliest_checkpoint}")
         elif config.get("pretrained_model", ""):
             hf_checkpoint = load_custom_model_from_hf(
                 "Plachta/Seed-VC", config["pretrained_model"], None
@@ -365,9 +365,9 @@ def main(args: argparse.Namespace) -> None:
 
     if os.path.exists(str(latest_checkpoint)):
         model.load_weights(str(latest_checkpoint))
-        print(f"Loaded checkpoint from {latest_checkpoint}")
+        logger.info(f"Loaded checkpoint from {latest_checkpoint}")
     else:
-        print("Failed to load any checkpoint, training from scratch.")
+        logger.warning("Failed to load any checkpoint, training from scratch.")
 
     trainer = Trainer(
         model=model,
@@ -375,7 +375,7 @@ def main(args: argparse.Namespace) -> None:
         train_data_path=train_data_path,
         val_data_path=args.val_dataset,
         cache_root=args.cache_root,
-        run_name=args.run_name,
+        logger=logger,
         batch_size=args.batch_size,
         steps=args.max_steps,
         max_epochs=args.max_epochs,
@@ -385,7 +385,13 @@ def main(args: argparse.Namespace) -> None:
         require_cache=args.require_cache,
         device=args.device,
     )
-    trainer.train()
+    try:
+        trainer.train()
+    except Exception as exc:
+        logger.error("Training failed", exc=exc)
+        raise
+    finally:
+        logger.close()
 
 
 if __name__ == "__main__":
@@ -433,7 +439,7 @@ if __name__ == "__main__":
             "Use --no-require-cache to allow computing missing features on the fly."
         ),
     )
-    parser.add_argument("--run-name", type=str, default="my_run")
+    parser.add_argument("--run-name", type=str, default="hahahah")
     parser.add_argument("--batch-size", type=int, default=2)
     parser.add_argument("--max-steps", type=int, default=1000)
     parser.add_argument("--max-epochs", type=int, default=1000)
