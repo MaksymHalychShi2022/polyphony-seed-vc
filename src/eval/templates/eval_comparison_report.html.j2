@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Seed-VC Comparison Report</title>
+  <style>
+    :root {
+      --bg: #f4efe6;
+      --panel: #fffdf8;
+      --panel-strong: #f7f1e5;
+      --ink: #1f2933;
+      --muted: #6b7280;
+      --line: #d8d1c4;
+      --accent: #0f766e;
+      --accent-soft: #d9f2ef;
+      --bad: #b42318;
+      --warn: #b45309;
+      --shadow: 0 12px 28px rgba(35, 31, 32, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Source Sans 3", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(15, 118, 110, 0.12), transparent 28%),
+        radial-gradient(circle at top right, rgba(217, 242, 239, 0.8), transparent 30%),
+        linear-gradient(180deg, #f8f3ec 0%, var(--bg) 100%);
+    }
+    .wrap {
+      max-width: 1480px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    .hero, .controls, .table-wrap {
+      background: rgba(255, 253, 248, 0.92);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+    }
+    .hero {
+      padding: 24px;
+      margin-bottom: 18px;
+      background:
+        linear-gradient(135deg, rgba(255, 244, 214, 0.9), rgba(217, 242, 239, 0.94)),
+        var(--panel);
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: 34px;
+      letter-spacing: 0.01em;
+    }
+    .meta, .run-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 16px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .run-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 14px;
+      margin: 18px 0;
+    }
+    .run-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 16px;
+    }
+    .run-card h2 {
+      margin: 0 0 8px;
+      font-size: 22px;
+    }
+    .checkpoint {
+      font-family: "Fira Code", "SFMono-Regular", monospace;
+      font-size: 12px;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+      margin-bottom: 12px;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .metric-card {
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: var(--panel-strong);
+    }
+    .metric-card .label {
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .metric-card .value {
+      font-size: 24px;
+      font-weight: 700;
+      margin-top: 4px;
+      color: var(--accent);
+    }
+    .summary-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .summary-strip .metric-card { background: rgba(255, 255, 255, 0.8); }
+    .controls {
+      padding: 16px;
+      margin-bottom: 14px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-items: end;
+    }
+    .controls label {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    select, input, button {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 9px 11px;
+      font: inherit;
+      background: #fff;
+      color: var(--ink);
+    }
+    button {
+      cursor: pointer;
+      background: var(--accent-soft);
+      color: #0b5c55;
+      font-weight: 600;
+    }
+    .table-wrap {
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1180px;
+    }
+    thead {
+      background: #f1ece3;
+    }
+    th, td {
+      padding: 12px;
+      border-bottom: 1px solid #ebe4d6;
+      vertical-align: top;
+      text-align: left;
+      font-size: 14px;
+    }
+    th {
+      font-size: 12px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: #475467;
+    }
+    tr.hidden { display: none; }
+    .file-label {
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .subtle {
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .metric-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: #0b5c55;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .metric-pill.na {
+      background: #f3f4f6;
+      color: var(--muted);
+    }
+    .metric-pill.delta-up { background: #d9f2ef; }
+    .metric-pill.delta-down { background: #fde9d8; color: #9a3412; }
+    .status {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .status.error { color: var(--bad); }
+    .missing {
+      padding: 10px;
+      border-radius: 12px;
+      background: #fff7ed;
+      border: 1px dashed #f1b98b;
+      color: var(--warn);
+      font-weight: 600;
+      font-size: 13px;
+    }
+    audio {
+      width: 190px;
+      max-width: 100%;
+      display: block;
+      margin-top: 6px;
+    }
+    @media (max-width: 900px) {
+      .wrap { padding: 12px; }
+      h1 { font-size: 28px; }
+      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      audio { width: 150px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <h1>Seed-VC Evaluation Comparison</h1>
+      <div class="meta">
+        <span>Generated: {{ generated_at }}</span>
+        <span>Metric: {{ metric_name }}</span>
+        <span>Total comparison rows: {{ rows|length }}</span>
+      </div>
+      <div class="run-grid">
+        {% for run in runs %}
+        <article class="run-card">
+          <h2>{{ run.label }}</h2>
+          <div class="checkpoint">{{ run.checkpoint or "Checkpoint unavailable" }}</div>
+          <div class="metrics">
+            <div class="metric-card">
+              <div class="label">Mean</div>
+              <div class="value">{{ "%.4f"|format(run.mean) if run.mean is not none else "N/A" }}</div>
+            </div>
+            <div class="metric-card">
+              <div class="label">Rows scored</div>
+              <div class="value">{{ run.scored if run.scored is not none else "N/A" }}</div>
+            </div>
+            <div class="metric-card">
+              <div class="label">Generated</div>
+              <div class="value">{{ run.generated_count if run.generated_count is not none else "N/A" }}</div>
+            </div>
+          </div>
+          <div class="run-meta" style="margin-top:12px;">
+            <span>Cache: {{ run.cache_name }}</span>
+            <span><a href="{{ run.metrics_manifest }}">metrics_manifest.json</a></span>
+            <span><a href="{{ run.results_manifest }}">results_manifest.json</a></span>
+          </div>
+        </article>
+        {% endfor %}
+      </div>
+      <div class="summary-strip">
+        <div class="metric-card">
+          <div class="label">Rows in both runs</div>
+          <div class="value">{{ rows | selectattr('has_both_runs') | list | length }}</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Only in Run A</div>
+          <div class="value">{{ rows | rejectattr('run_b') | list | length }}</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Only in Run B</div>
+          <div class="value">{{ rows | rejectattr('run_a') | list | length }}</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="controls">
+      <label>
+        Sort rows
+        <select id="sortOrder">
+          <option value="delta-desc">Delta high to low</option>
+          <option value="delta-asc">Delta low to high</option>
+          <option value="run-b-desc">Run B high to low</option>
+          <option value="run-a-desc">Run A high to low</option>
+          <option value="original">Original order</option>
+        </select>
+      </label>
+      <label>
+        Min run A metric
+        <input id="minRunA" type="number" step="0.0001" placeholder="e.g. 0.8000">
+      </label>
+      <label>
+        Min run B metric
+        <input id="minRunB" type="number" step="0.0001" placeholder="e.g. 0.8000">
+      </label>
+      <label>
+        Require both runs
+        <select id="requireBoth">
+          <option value="no">No</option>
+          <option value="yes">Yes</option>
+        </select>
+      </label>
+      <button id="clearFilters" type="button">Reset</button>
+      <span id="visibleCount" class="status"></span>
+    </section>
+
+    <section class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Item</th>
+            <th>Source</th>
+            <th>Target</th>
+            <th>Run A</th>
+            <th>Run B</th>
+            <th>Delta</th>
+          </tr>
+        </thead>
+        <tbody id="rows">
+          {% for row in rows %}
+          <tr
+            data-order="{{ loop.index0 }}"
+            data-run-a="{{ row.run_a.metric_value if row.run_a and row.run_a.metric_value is not none else '' }}"
+            data-run-b="{{ row.run_b.metric_value if row.run_b and row.run_b.metric_value is not none else '' }}"
+            data-delta="{{ row.delta_metric if row.delta_metric is not none else '' }}"
+            data-has-both="{{ 'true' if row.has_both_runs else 'false' }}"
+          >
+            <td>{{ row.index }}</td>
+            <td>
+              <div class="file-label">{{ row.source_name }}</div>
+              <div class="subtle">target: {{ row.target_name }}</div>
+            </td>
+            <td>
+              <div class="file-label">{{ row.source_label }}</div>
+              <audio controls preload="none" src="{{ row.source_path }}"></audio>
+            </td>
+            <td>
+              <div class="file-label">{{ row.target_label }}</div>
+              <audio controls preload="none" src="{{ row.target_path }}"></audio>
+            </td>
+            <td>
+              {% if row.run_a %}
+              <div class="metric-pill{% if row.run_a.metric_value is none %} na{% endif %}">{{ row.run_a.metric_display }}</div>
+              <div class="status{% if row.run_a.error %} error{% endif %}">
+                generation={{ row.run_a.generation_status }}, metric={{ row.run_a.metric_status }}
+                {% if row.run_a.error %}<br>{{ row.run_a.error }}{% endif %}
+              </div>
+              <audio controls preload="none" src="{{ row.run_a.generated_path }}"></audio>
+              {% else %}
+              <div class="missing">Missing from Run A</div>
+              {% endif %}
+            </td>
+            <td>
+              {% if row.run_b %}
+              <div class="metric-pill{% if row.run_b.metric_value is none %} na{% endif %}">{{ row.run_b.metric_display }}</div>
+              <div class="status{% if row.run_b.error %} error{% endif %}">
+                generation={{ row.run_b.generation_status }}, metric={{ row.run_b.metric_status }}
+                {% if row.run_b.error %}<br>{{ row.run_b.error }}{% endif %}
+              </div>
+              <audio controls preload="none" src="{{ row.run_b.generated_path }}"></audio>
+              {% else %}
+              <div class="missing">Missing from Run B</div>
+              {% endif %}
+            </td>
+            <td>
+              {% set delta_class = ' na' %}
+              {% if row.delta_metric is not none and row.delta_metric > 0 %}
+                {% set delta_class = ' delta-up' %}
+              {% elif row.delta_metric is not none and row.delta_metric < 0 %}
+                {% set delta_class = ' delta-down' %}
+              {% endif %}
+              <div class="metric-pill{{ delta_class }}">{{ row.delta_display }}</div>
+              <div class="subtle">Run B - Run A</div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </div>
+
+  <script>
+    const tbody = document.getElementById('rows');
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    const sortOrder = document.getElementById('sortOrder');
+    const minRunA = document.getElementById('minRunA');
+    const minRunB = document.getElementById('minRunB');
+    const requireBoth = document.getElementById('requireBoth');
+    const clearFilters = document.getElementById('clearFilters');
+    const visibleCount = document.getElementById('visibleCount');
+
+    function parseNumber(value) {
+      if (value === '') return null;
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function rowNumber(row, key) {
+      return parseNumber(row.dataset[key]);
+    }
+
+    function updateView() {
+      const minA = parseNumber(minRunA.value);
+      const minB = parseNumber(minRunB.value);
+      const needBoth = requireBoth.value === 'yes';
+
+      rows.forEach((row) => {
+        const runA = rowNumber(row, 'runA');
+        const runB = rowNumber(row, 'runB');
+        const hasBoth = row.dataset.hasBoth === 'true';
+        const hide =
+          (minA !== null && (runA === null || runA < minA)) ||
+          (minB !== null && (runB === null || runB < minB)) ||
+          (needBoth && !hasBoth);
+        row.classList.toggle('hidden', hide);
+      });
+
+      const ordered = [...rows];
+      const mode = sortOrder.value;
+      const keyMap = {
+        'delta-desc': ['delta', -1],
+        'delta-asc': ['delta', 1],
+        'run-b-desc': ['runB', -1],
+        'run-a-desc': ['runA', -1],
+      };
+
+      if (mode === 'original') {
+        ordered.sort((a, b) => Number(a.dataset.order) - Number(b.dataset.order));
+      } else {
+        const [key, direction] = keyMap[mode];
+        ordered.sort((a, b) => {
+          const left = rowNumber(a, key);
+          const right = rowNumber(b, key);
+          if (left === null && right === null) return Number(a.dataset.order) - Number(b.dataset.order);
+          if (left === null) return 1;
+          if (right === null) return -1;
+          if (left === right) return Number(a.dataset.order) - Number(b.dataset.order);
+          return left < right ? direction : -direction;
+        });
+      }
+
+      tbody.innerHTML = '';
+      ordered.forEach((row) => tbody.appendChild(row));
+
+      const visible = rows.filter((row) => !row.classList.contains('hidden')).length;
+      visibleCount.textContent = `${visible} of ${rows.length} rows visible`;
+    }
+
+    [sortOrder, minRunA, minRunB, requireBoth].forEach((el) => {
+      el.addEventListener('input', updateView);
+      el.addEventListener('change', updateView);
+    });
+
+    clearFilters.addEventListener('click', () => {
+      sortOrder.value = 'delta-desc';
+      minRunA.value = '';
+      minRunB.value = '';
+      requireBoth.value = 'no';
+      updateView();
+    });
+
+    updateView();
+  </script>
+</body>
+</html>

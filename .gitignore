@@ -58,6 +58,7 @@ data/
 checkpoints/
 demo/generated/
 runs/
+ignore/
 
 openspec
 .opencode
