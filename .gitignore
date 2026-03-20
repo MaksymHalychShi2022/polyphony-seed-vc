@@ -52,6 +52,15 @@ dist/
 *.egg-info/
 *.spec
 
+# === Agentic engineering ===
+.claude/
+.opencode/
+.pi/
+
+openspec/
+
+CLAUDE.md
+
 # === Project Specific ===
 .cache/
 data/
@@ -59,8 +68,5 @@ checkpoints/
 demo/generated/
 runs/
 ignore/
-
-openspec
-.opencode
 
 TODO
