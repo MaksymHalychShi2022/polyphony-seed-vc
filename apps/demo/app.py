@@ -487,203 +487,57 @@ def main(args):
     # streaming and chunk processing related params
     max_context_window = sr // hop_length * 30
     overlap_wave_len = overlap_frame_len * hop_length
-    description = "Zero-shot voice conversion with in-context learning"
-    examples = [
-        {
-            "id": 0,
-            "title": "BMI_UK16100205",
-            "source": "demo/examples/BMI_UK16100205_MIC06.mp3",
-            "target": "demo/examples/BMI_UK16100205_mix.mp3",
-            "diffusion_steps": 50,
-            "length_adjust": 1.0,
-            "inference_cfg_rate": 0.7,
-            "auto_f0_adjust": True,
-            "pitch_shift": 0,
-        }
-    ]
-
-    def route_from_query(request: gr.Request):
-        qp = {}
-        try:
-            qp = dict(request.query_params)
-        except Exception:
-            qp = {}
-
-        if qp.get("view") == "convert":
-            header = f"# Seed Voice Conversion\n\n{description}\n\n[Back to list](?)"
-            return (
-                gr.update(visible=False),
-                gr.update(visible=True),
-                gr.update(value=header),
-                gr.update(value=None),
-                gr.update(value=None),
-                gr.update(),
-                gr.update(),
-                gr.update(),
-                gr.update(),
-                gr.update(),
-            )
-
-        raw = qp.get("example")
-        try:
-            example_id = int(raw) if raw is not None else None
-        except Exception:
-            example_id = None
-
-        if example_id is None:
-            return (
-                gr.update(visible=True),
-                gr.update(visible=False),
-                gr.update(value="# Examples\n\nPick an example to open details."),
-                gr.update(),
-                gr.update(),
-                gr.update(),
-                gr.update(),
-                gr.update(),
-                gr.update(),
-                gr.update(),
-            )
-
-        ex = next((e for e in examples if e["id"] == example_id), None)
-        if ex is None:
-            return (
-                gr.update(visible=True),
-                gr.update(visible=False),
-                gr.update(value=f"# Examples\n\nUnknown example id: {example_id}"),
-                gr.update(),
-                gr.update(),
-                gr.update(),
-                gr.update(),
-                gr.update(),
-                gr.update(),
-                gr.update(),
-            )
-
-        header = (
-            f"# Seed Voice Conversion\n\n"
-            f"**Example:** {ex['title']} (id={ex['id']})  \\n"
-            f"[Back to list](?)"
-        )
-
-        return (
-            gr.update(visible=False),
-            gr.update(visible=True),
-            gr.update(value=header),
-            gr.update(value=ex["source"]),
-            gr.update(value=ex["target"]),
-            gr.update(value=ex["diffusion_steps"]),
-            gr.update(value=ex["length_adjust"]),
-            gr.update(value=ex["inference_cfg_rate"]),
-            gr.update(value=ex["auto_f0_adjust"]),
-            gr.update(value=ex["pitch_shift"]),
-        )
 
     with gr.Blocks(title="Seed Voice Conversion") as demo:
-        list_view = gr.Column(visible=True)
-        details_view = gr.Column(visible=False)
-
-        with list_view:
-            gr.Markdown("# Examples\n\nPick an example to open details.")
-            for ex in examples:
-                with gr.Row():
-                    with gr.Column(scale=2):
-                        gr.Markdown(
-                            f"**{ex['title']}** (id={ex['id']})\\n\\n[Open](?example={ex['id']})"
-                        )
-                    with gr.Column(scale=3):
-                        gr.Audio(value=ex["source"], label="Source", interactive=False)
-                    with gr.Column(scale=3):
-                        gr.Audio(
-                            value=ex["target"], label="Reference", interactive=False
-                        )
-
-            gr.Markdown(
-                "---\n\nOr open conversion directly (no example): [Convert](?view=convert)"
+        gr.Markdown("# Seed Voice Conversion")
+        with gr.Row():
+            source_audio = gr.Audio(type="filepath", label="Source Audio")
+            target_audio = gr.Audio(type="filepath", label="Reference Audio")
+        with gr.Accordion("Advanced settings", open=False):
+            diffusion_steps = gr.Slider(
+                minimum=1,
+                maximum=200,
+                value=10,
+                step=1,
+                label="Diffusion Steps",
+                info="10 by default, 50~100 for best quality",
             )
-
-        with details_view:
-            details_header = gr.Markdown(
-                f"# Seed Voice Conversion\n\n{description}\n\n[Back to list](?)"
+            length_adjust = gr.Slider(
+                minimum=0.5,
+                maximum=2.0,
+                step=0.1,
+                value=1.0,
+                label="Length Adjust",
+                info="<1.0 for speed-up speech, >1.0 for slow-down speech",
             )
-            with gr.Row():
-                with gr.Column():
-                    source_audio = gr.Audio(type="filepath", label="Source Audio")
-                    target_audio = gr.Audio(type="filepath", label="Reference Audio")
-                    diffusion_steps = gr.Slider(
-                        minimum=1,
-                        maximum=200,
-                        value=10,
-                        step=1,
-                        label="Diffusion Steps",
-                        info="10 by default, 50~100 for best quality",
-                    )
-                    length_adjust = gr.Slider(
-                        minimum=0.5,
-                        maximum=2.0,
-                        step=0.1,
-                        value=1.0,
-                        label="Length Adjust",
-                        info="<1.0 for speed-up speech, >1.0 for slow-down speech",
-                    )
-                    inference_cfg_rate = gr.Slider(
-                        minimum=0.0,
-                        maximum=1.0,
-                        step=0.1,
-                        value=0.7,
-                        label="Inference CFG Rate",
-                        info="has subtle influence",
-                    )
-                    auto_f0_adjust = gr.Checkbox(
-                        label="Auto F0 adjust",
-                        value=True,
-                        info="Roughly adjust F0 to match target voice. Only works when F0 conditioned model is used.",
-                    )
-                    pitch_shift = gr.Slider(
-                        label="Pitch shift",
-                        minimum=-24,
-                        maximum=24,
-                        step=1,
-                        value=0,
-                        info="Pitch shift in semitones, only works when F0 conditioned model is used",
-                    )
-                    convert_button = gr.Button("Convert")
-                with gr.Column():
-                    output_audio = gr.Audio(
-                        label="Output Audio",
-                        streaming=False,
-                        format="wav",
-                        type="numpy",
-                    )
+            inference_cfg_rate = gr.Slider(
+                minimum=0.0,
+                maximum=1.0,
+                step=0.1,
+                value=0.7,
+                label="Inference CFG Rate",
+                info="has subtle influence",
+            )
+        convert_button = gr.Button("Convert")
+        output_audio = gr.Audio(
+            label="Output Audio",
+            streaming=False,
+            format="wav",
+            type="numpy",
+        )
 
         convert_button.click(
-            voice_conversion,
+            lambda src, tgt, steps, adj, cfg: voice_conversion(
+                src, tgt, steps, adj, cfg, True, 0
+            ),
             inputs=[
                 source_audio,
                 target_audio,
                 diffusion_steps,
                 length_adjust,
                 inference_cfg_rate,
-                auto_f0_adjust,
-                pitch_shift,
             ],
             outputs=output_audio,
-        )
-
-        demo.load(
-            route_from_query,
-            inputs=None,
-            outputs=[
-                list_view,
-                details_view,
-                details_header,
-                source_audio,
-                target_audio,
-                diffusion_steps,
-                length_adjust,
-                inference_cfg_rate,
-                auto_f0_adjust,
-                pitch_shift,
-            ],
         )
 
     demo.launch(

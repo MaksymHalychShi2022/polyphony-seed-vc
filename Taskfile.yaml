@@ -6,7 +6,7 @@ tasks:
   demo:
     desc: "Run gradio demo"
     cmds:
-      - uv run python -m apps.demo.app
+      - uv run python -m apps.demo.app --checkpoint runs/my_run/DiT_epoch_00007_step_00800.pth --config  configs/presets/config_dit_mel_seed_uvit_whisper_base_f0_44k.yml
 
   dataset-eda:
     desc: "Run Streamlit dataset browser for data/raw/videos.json"
