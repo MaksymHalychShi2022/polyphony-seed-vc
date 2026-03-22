@@ -102,6 +102,11 @@ tasks:
   tensorboard:
     - uv run python -m tensorboard.main --logdir runs
 
+  mlflow:
+    desc: "Run MLflow tracking server"
+    cmds:
+      - uv run mlflow ui --backend-store-uri "{{.MLFLOW_TRACKING_URI}}"
+
   eval:
     desc: "Run eval with FeaturesDataset + SeedVCModel."
     vars:

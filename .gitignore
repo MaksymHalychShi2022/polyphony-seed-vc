@@ -69,4 +69,6 @@ demo/generated/
 runs/
 ignore/
 
+mlruns.db
+
 TODO
