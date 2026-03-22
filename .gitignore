@@ -63,11 +63,15 @@ CLAUDE.md
 
 # === Project Specific ===
 .cache/
-data/
+data/example
+data/processed
+data/dataset.csv
 checkpoints/
 demo/generated/
 runs/
 ignore/
+
+*mp3
 
 mlruns.db
 
