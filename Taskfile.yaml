@@ -13,10 +13,13 @@ tasks:
     cmds:
       - uv run python -m apps.singmos.app
 
-  sam-audio:
-    desc: "Run SAM-Audio sound isolation demo"
+  sam-audio:docker:
+    desc: "Run SAM-Audio via official HF Space Docker image on port 7860"
     cmds:
-      - uv run python -m apps.sam_audio.app
+      - >
+        docker run -it -p 7860:7860 --platform=linux/amd64
+        -e HF_TOKEN="{{.HF_TOKEN}}"
+        registry.hf.space/lpeterl-sam-audio-webui:latest python app.py
 
   dataset-eda:
     desc: "Run Streamlit dataset browser for data/raw/videos.json"
