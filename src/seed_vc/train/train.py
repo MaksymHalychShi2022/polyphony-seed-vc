@@ -322,8 +322,8 @@ def main(args: argparse.Namespace) -> None:
         raise ValueError("Provide --train-dataset (or legacy --dataset) for training.")
 
     config = yaml.safe_load(open(args.config))
-    log_dir = os.path.join(config["log_dir"], args.run_name)
-    logger = TrainLogger(experiment_dir=log_dir)
+    logger = TrainLogger(experiment_name=args.run_name)
+    logger.start()
     logger.save_artifact(args.config)
 
     model = SeedVCModel(config["model_params"])
@@ -331,7 +331,7 @@ def main(args: argparse.Namespace) -> None:
     latest_checkpoint: str = ""
     if args.pretrained_ckpt is None:
         available_checkpoints = glob.glob(
-            os.path.join(log_dir, "DiT_epoch_*_step_*.pth")
+            os.path.join(str(logger.experiment_dir), "DiT_epoch_*_step_*.pth")
         )
         if len(available_checkpoints) > 0:
             latest_checkpoint = max(

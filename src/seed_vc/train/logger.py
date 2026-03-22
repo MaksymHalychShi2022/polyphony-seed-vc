@@ -2,25 +2,32 @@ import logging
 import os
 import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
-from typing import Any
 
+import mlflow
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 
 class TrainLogger:
-    def __init__(
-        self,
-        experiment_dir: str,
-        tensorboard_writer: SummaryWriter | None = None,
-        mlflow_client: Any | None = None,
-    ) -> None:
-        self.experiment_dir = Path(experiment_dir)
-        self.experiment_dir.mkdir(parents=True, exist_ok=True)
-        self.train_log_path = self.experiment_dir / "train.log"
+    def __init__(self, experiment_name: str) -> None:
+        self.experiment_name = experiment_name
+        self._started = False
+        self._progress_bar: tqdm | None = None
 
-        self._logger = logging.getLogger(f"seed_vc.train.{self.experiment_dir.name}")
+    @property
+    def experiment_dir(self) -> Path:
+        self._require_started()
+        return self._experiment_dir
+
+    def start(self) -> None:
+        experiments_dir = os.getenv("EXPERIMENTS_DIR", "runs")
+        self._experiment_dir = Path(experiments_dir) / self.experiment_name
+        self._experiment_dir.mkdir(parents=True, exist_ok=True)
+        self.train_log_path = self._experiment_dir / "train.log"
+
+        self._logger = logging.getLogger(f"seed_vc.train.{self.experiment_name}")
         self._logger.setLevel(logging.INFO)
         self._logger.propagate = False
         self._logger.handlers.clear()
@@ -41,20 +48,23 @@ class TrainLogger:
         self._logger.addHandler(file_handler)
         self._logger.addHandler(stream_handler)
 
-        self.writer = tensorboard_writer or SummaryWriter(str(self.experiment_dir))
-        self._mlflow = mlflow_client
-        self._mlflow_run_started = False
+        self.writer = SummaryWriter(str(self._experiment_dir))
+
         self._configure_mlflow()
 
-        self._progress_bar: tqdm | None = None
+        self._started = True
+        self.info(f"Experiment started: {self.experiment_name}")
 
     def info(self, message: str) -> None:
+        self._require_started()
         self._logger.info(message)
 
     def warning(self, message: str) -> None:
+        self._require_started()
         self._logger.warning(message)
 
     def error(self, message: str, exc: BaseException | None = None) -> None:
+        self._require_started()
         if exc is not None:
             self._logger.error(
                 "%s: %s",
@@ -68,8 +78,9 @@ class TrainLogger:
         self._logger.error(message, exc_info=has_exc)
 
     def save_artifact(self, path: str) -> str:
+        self._require_started()
         src = Path(path)
-        dst = self.experiment_dir / src.name
+        dst = self._experiment_dir / src.name
         shutil.copyfile(src, dst)
         return str(dst)
 
@@ -80,17 +91,12 @@ class TrainLogger:
         step: int,
         context: str | None = None,
     ) -> None:
+        self._require_started()
         metric_name = f"{context}/{name}" if context else name
         self.writer.add_scalar(metric_name, value, step)
         self.writer.flush()
 
-        if self._mlflow is None:
-            return
-
-        try:
-            self._mlflow.log_metric(metric_name, float(value), step=step)
-        except Exception as exc:
-            self.warning(f"Failed to log metric '{metric_name}' to MLflow: {exc}")
+        mlflow.log_metric(metric_name, float(value), step=step)
 
     def progress(
         self,
@@ -99,6 +105,7 @@ class TrainLogger:
         desc: str | None = None,
         close: bool = False,
     ) -> None:
+        self._require_started()
         if close:
             if self._progress_bar is not None:
                 self._progress_bar.close()
@@ -118,41 +125,33 @@ class TrainLogger:
             self._progress_bar.update(advance)
 
     def close(self) -> None:
+        if not self._started:
+            return
         self.progress(close=True)
         self.writer.close()
-        if self._mlflow is not None and self._mlflow_run_started:
-            try:
-                self._mlflow.end_run()
-            except Exception as exc:
-                self.warning(f"Failed to close MLflow run: {exc}")
+        mlflow.log_artifact(str(self.train_log_path))
+        mlflow.end_run()
         for handler in list(self._logger.handlers):
             handler.flush()
             handler.close()
             self._logger.removeHandler(handler)
 
-    def _configure_mlflow(self) -> None:
-        if self._mlflow is not None:
-            return
+    def _require_started(self) -> None:
+        if not self._started:
+            raise RuntimeError(
+                "TrainLogger has not been started. Call logger.start() before logging."
+            )
 
+    def _configure_mlflow(self) -> None:
         tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
         if not tracking_uri:
-            return
+            raise RuntimeError("MLFLOW_TRACKING_URI environment variable is not set.")
 
-        try:
-            import mlflow  # type: ignore
-
-            mlflow.set_tracking_uri(tracking_uri)
-            experiment_name = self.experiment_dir.name
-            mlflow.set_experiment(experiment_name)
-            if mlflow.active_run() is None:
-                mlflow.start_run(run_name=experiment_name)
-                self._mlflow_run_started = True
-            self._mlflow = mlflow
-            self.info(
-                f"MLflow logging enabled for experiment '{experiment_name}' at {tracking_uri}"
-            )
-        except Exception as exc:
-            self._mlflow = None
-            self.warning(
-                f"MLflow disabled: failed to initialize remote tracking: {exc}"
-            )
+        mlflow.set_tracking_uri(tracking_uri)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        unique_name = f"{self.experiment_name}_{timestamp}"
+        mlflow.set_experiment(unique_name)
+        mlflow.start_run(run_name=unique_name)
+        self._logger.info(
+            f"MLflow logging enabled for experiment '{unique_name}' at {tracking_uri}"
+        )
