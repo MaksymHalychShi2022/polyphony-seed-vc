@@ -64,7 +64,7 @@ CLAUDE.md
 # === Project Specific ===
 .cache/
 data/example
-data/processed
+
 data/dataset.csv
 checkpoints/
 demo/generated/

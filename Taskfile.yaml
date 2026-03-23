@@ -33,7 +33,7 @@ tasks:
       - >
         uv run python scripts/process_raw_dataset.py
         {{.DATASET_RAW}}
-        --max-songs 100
+        --max-songs 10
         --out-dir "{{.DATASET_PROCESSED}}"
       - >
         uv run python scripts/build_train_val_csv.py
