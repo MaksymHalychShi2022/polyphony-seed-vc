@@ -13,13 +13,13 @@ class WhisperFeatureExtractor(BaseFeatureExtractor):
     def __init__(
         self,
         whisper_model_name: str,
-        cache_root: str | Path,
+        features_root: str | Path,
         device: str | None = None,
-        require_cache: bool = False,
+        require_features: bool = False,
     ):
         super().__init__(
-            cache_root=cache_root,
-            require_cache=require_cache,
+            features_root=features_root,
+            require_features=require_features,
         )
         self.whisper_model_name = whisper_model_name
         self._whisper_model: WhisperModel | None = None

@@ -260,9 +260,9 @@ def generate_audio(
 
 def run_generate_results_stage(
     dataset_path: Path,
+    split: str,
     config_path: Path,
-    cache_root: Path,
-    require_cache: bool,
+    require_features: bool,
     generated_base: Path,
     generated_suffix: str,
     match_field: str,
@@ -294,15 +294,14 @@ def run_generate_results_stage(
     torch_device = torch.device(resolved_device)
 
     dataloader = build_features_dataloader(
-        data_path=dataset_path,
+        split=split,
         spect_params=spect_params,
         whisper_model_name=whisper_model_name,
-        cache_root=cache_root,
         sr=sr,
         batch_size=1,
         num_workers=0,
         shuffle=False,
-        require_cache=require_cache,
+        require_features=require_features,
         semantic_device=resolved_device,
         f0_device=resolved_device,
         embedding_device=resolved_device,
@@ -606,11 +605,11 @@ def run_build_report_stage(
     help="Stage to run. 'all' runs generate-results, compute-metrics, and build-report.",
 )
 @click.option(
-    "--dataset",
-    "dataset_path",
-    default="data/dataset.csv",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="CSV with source,target columns.",
+    "--split",
+    default="val",
+    type=click.Choice(["train", "val"]),
+    show_default=True,
+    help="Dataset split to evaluate (reads DATA_PROCESSED/{split}.csv).",
 )
 @click.option(
     "--config",
@@ -620,15 +619,9 @@ def run_build_report_stage(
     help="Training config used for model and feature settings.",
 )
 @click.option(
-    "--cache-root",
-    default=".cache",
-    type=click.Path(file_okay=False, path_type=Path),
-    help="Cache root used by feature extractors.",
-)
-@click.option(
-    "--require-cache/--allow-compute-missing",
+    "--require-features/--allow-compute-missing",
     default=True,
-    help="Require cache files, or compute missing FeaturesDataset features on demand.",
+    help="Require feature files (DATA_FEATURES), or compute missing features on demand.",
 )
 @click.option(
     "--generated-dir",
@@ -731,10 +724,9 @@ def run_build_report_stage(
 )
 def main(
     stage: str,
-    dataset_path: Path,
+    split: str,
     config_path: Path,
-    cache_root: Path,
-    require_cache: bool,
+    require_features: bool,
     generated_dir: Path | None,
     results_manifest: Path | None,
     metrics_manifest: Path | None,
@@ -753,6 +745,9 @@ def main(
     auto_f0_adjust: bool,
     generate: bool,
 ) -> None:
+    import os
+
+    dataset_path = Path(os.environ["DATA_PROCESSED"]) / f"{split}.csv"
     generated_base, resolved_results, resolved_metrics, resolved_report = (
         resolve_default_artifacts(
             dataset_path=dataset_path,
@@ -776,9 +771,9 @@ def main(
     if stage == "generate-results":
         run_generate_results_stage(
             dataset_path=dataset_path,
+            split=split,
             config_path=config_path,
-            cache_root=cache_root,
-            require_cache=require_cache,
+            require_features=require_features,
             generated_base=generated_base,
             generated_suffix=generated_suffix,
             match_field=match_field,
@@ -814,9 +809,9 @@ def main(
 
     run_generate_results_stage(
         dataset_path=dataset_path,
+        split=split,
         config_path=config_path,
-        cache_root=cache_root,
-        require_cache=require_cache,
+        require_features=require_features,
         generated_base=generated_base,
         generated_suffix=generated_suffix,
         match_field=match_field,

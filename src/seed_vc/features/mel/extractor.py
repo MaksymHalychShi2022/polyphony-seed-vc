@@ -14,13 +14,13 @@ class MelSpectrogramExtractor(BaseFeatureExtractor):
     def __init__(
         self,
         spect_params: dict[str, Any],
-        cache_root: str | Path,
+        features_root: str | Path,
         sr: int = 22050,
-        require_cache: bool = False,
+        require_features: bool = False,
     ):
         super().__init__(
-            cache_root=cache_root,
-            require_cache=require_cache,
+            features_root=features_root,
+            require_features=require_features,
         )
 
         self.sr = int(sr)

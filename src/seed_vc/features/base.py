@@ -3,28 +3,26 @@ from pathlib import Path
 
 import torch
 
-FEATURES_CACHE_SUBDIR = "features"
-
 
 class BaseFeatureExtractor(ABC):
     feature_name: str = ""
 
     def __init__(
         self,
-        cache_root: str | Path,
-        require_cache: bool = False,
+        features_root: str | Path,
+        require_features: bool = False,
     ):
         if not self.feature_name:
             raise ValueError("Extractor must define class attribute 'feature_name'")
 
-        self.cache_root = Path(cache_root).expanduser().resolve()
-        self.require_cache = require_cache
+        self.features_root = Path(features_root).expanduser().resolve()
+        self.require_features = require_features
 
     @abstractmethod
     def _extract(self, audio_path: Path) -> torch.Tensor:
         raise NotImplementedError
 
-    def get_cache_path(self, audio_path: str | Path) -> Path:
+    def get_feature_path(self, audio_path: str | Path) -> Path:
         resolved = Path(audio_path).expanduser().resolve()
         cwd = Path.cwd().resolve()
         try:
@@ -35,51 +33,46 @@ class BaseFeatureExtractor(ABC):
             ) from exc
 
         if relative_path.suffix:
-            relative_cache_path = relative_path.with_suffix(
+            relative_feature_path = relative_path.with_suffix(
                 f"{relative_path.suffix}.pt"
             )
         else:
-            relative_cache_path = relative_path.with_suffix(".pt")
+            relative_feature_path = relative_path.with_suffix(".pt")
 
-        return (
-            self.cache_root
-            / FEATURES_CACHE_SUBDIR
-            / self.feature_name
-            / relative_cache_path
-        )
+        return self.features_root / self.feature_name / relative_feature_path
 
-    def save_feature(self, cache_path: Path, tensor: torch.Tensor) -> None:
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
+    def save_feature(self, feature_path: Path, tensor: torch.Tensor) -> None:
+        feature_path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"tensor": tensor.detach().cpu()}
-        torch.save(payload, cache_path)
+        torch.save(payload, feature_path)
 
-    def load_feature(self, cache_path: Path) -> torch.Tensor:
-        payload = torch.load(cache_path, map_location="cpu")
+    def load_feature(self, feature_path: Path) -> torch.Tensor:
+        payload = torch.load(feature_path, map_location="cpu")
         if isinstance(payload, dict):
             if "tensor" not in payload:
                 raise ValueError(
-                    f"Invalid cache payload at {cache_path}: missing 'tensor'"
+                    f"Invalid feature payload at {feature_path}: missing 'tensor'"
                 )
             return payload["tensor"]
         if torch.is_tensor(payload):
             return payload
-        raise ValueError(f"Invalid cache payload at {cache_path}")
+        raise ValueError(f"Invalid feature payload at {feature_path}")
 
     def extract(
-        self, audio_path: str | Path, require_cache: bool | None = None
+        self, audio_path: str | Path, require_features: bool | None = None
     ) -> torch.Tensor:
         resolved = Path(audio_path).expanduser().resolve()
-        cache_path = self.get_cache_path(resolved)
+        feature_path = self.get_feature_path(resolved)
 
-        if cache_path.exists():
-            return self.load_feature(cache_path)
+        if feature_path.exists():
+            return self.load_feature(feature_path)
 
-        effective_require_cache = (
-            self.require_cache if require_cache is None else require_cache
+        effective_require = (
+            self.require_features if require_features is None else require_features
         )
-        if effective_require_cache:
+        if effective_require:
             raise FileNotFoundError(
-                f"Cached {self.feature_name} feature not found for {resolved}: {cache_path}"
+                f"Feature file not found for {resolved}: {feature_path}"
             )
 
         if not resolved.exists():
@@ -89,5 +82,5 @@ class BaseFeatureExtractor(ABC):
         if not torch.is_tensor(tensor):
             raise TypeError(f"Extractor {self.feature_name} returned non-tensor output")
 
-        self.save_feature(cache_path, tensor)
+        self.save_feature(feature_path, tensor)
         return tensor.detach().cpu()

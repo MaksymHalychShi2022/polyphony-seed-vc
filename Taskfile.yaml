@@ -29,88 +29,32 @@ tasks:
   process-raw-dataset:
     desc: "Process raw dataset and build train/val CSV splits"
     cmds:
-      - rm -rf "{{.DATASET_PROCESSED}}" | true
-      - >
-        uv run python scripts/process_raw_dataset.py
-        {{.DATASET_RAW}}
-        --max-songs 10
-        --out-dir "{{.DATASET_PROCESSED}}"
-      - >
-        uv run python scripts/build_train_val_csv.py
-        "{{.DATASET_PROCESSED}}"
-        --train-csv "{{.TRAIN_DATASET}}"
-        --val-csv "{{.VAL_DATASET}}"
-
-  extract-features:train:
-    desc: "Precompute mel + semantic + f0 + embedding feature cache for train split"
-    cmds:
-      - >
-        uv run python scripts/precompute_mel_features.py
-        --dataset "{{.TRAIN_DATASET}}"
-        --cache-root "{{.CACHE_DIR}}"
-      - >
-        uv run python scripts/precompute_semantic_features.py
-        --dataset "{{.TRAIN_DATASET}}"
-        --cache-root "{{.CACHE_DIR}}"
-      - >
-        uv run python scripts/precompute_f0_features.py
-        --dataset "{{.TRAIN_DATASET}}"
-        --cache-root "{{.CACHE_DIR}}"
-      - >
-        uv run python scripts/precompute_embedding_features.py
-        --dataset "{{.TRAIN_DATASET}}"
-        --cache-root "{{.CACHE_DIR}}"
-
-  extract-features:val:
-    desc: "Precompute mel + semantic + f0 + embedding feature cache for val split"
-    cmds:
-      - >
-        uv run python scripts/precompute_mel_features.py
-        --dataset "{{.VAL_DATASET}}"
-        --cache-root "{{.CACHE_DIR}}"
-      - >
-        uv run python scripts/precompute_semantic_features.py
-        --dataset "{{.VAL_DATASET}}"
-        --cache-root "{{.CACHE_DIR}}"
-      - >
-        uv run python scripts/precompute_f0_features.py
-        --dataset "{{.VAL_DATASET}}"
-        --cache-root "{{.CACHE_DIR}}"
-      - >
-        uv run python scripts/precompute_embedding_features.py
-        --dataset "{{.VAL_DATASET}}"
-        --cache-root "{{.CACHE_DIR}}"
+      - rm -rf "{{.DATA_PROCESSED}}" | true
+      - uv run python scripts/process_raw_dataset.py --max-songs 10
+      - uv run python scripts/build_train_val_csv.py
 
   extract-features:
-    desc: "Precompute mel + semantic + f0 + embedding feature cache for train and val splits"
+    desc: "Precompute mel + semantic + f0 + embedding feature cache for all splits"
     cmds:
-      - task extract-features:train
-      - task extract-features:val
+      - uv run python scripts/precompute_mel_features.py
+      - uv run python scripts/precompute_semantic_features.py
+      - uv run python scripts/precompute_f0_features.py
+      - uv run python scripts/precompute_embedding_features.py
 
   iterate-ft-train:
     desc: "Iterate cached feature train split once and exit"
     cmds:
-      - >
-        uv run python -m seed_vc.train.features_dataset
-        --dataset "{{.TRAIN_DATASET}}"
-        --cache-root "{{.CACHE_DIR}}"
+      - uv run python -m seed_vc.train.features_dataset --split train
 
   iterate-ft-val:
     desc: "Iterate cached feature val split once and exit"
     cmds:
-      - >
-        uv run python -m seed_vc.train.features_dataset
-        --dataset "{{.VAL_DATASET}}"
-        --cache-root "{{.CACHE_DIR}}"
+      - uv run python -m seed_vc.train.features_dataset --split val
 
   train:
     desc: "Train using precomputed cached features"
     cmds:
-      - >
-        uv run python -m seed_vc.train.train
-        --train-dataset "{{.TRAIN_DATASET}}"
-        --val-dataset "{{.VAL_DATASET}}"
-        --cache-root "{{.CACHE_DIR}}"
+      - uv run python -m seed_vc.train.train
 
   tensorboard:
     - uv run python -m tensorboard.main --logdir runs
@@ -123,14 +67,10 @@ tasks:
   eval:
     desc: "Run eval with FeaturesDataset + SeedVCModel."
     vars:
-      DATASET: "{{.VAL_DATASET}}"
-      CACHE_ROOT: "{{.CACHE_DIR}}"
       CONFIG: configs/presets/config_dit_mel_seed_uvit_whisper_base_f0_44k.yml
       CHECKPOINT: runs/my_run/DiT_epoch_00007_step_00800.pth
     cmds:
       - >
         uv run python -m eval.cli
-        --dataset {{.DATASET}}
-        --cache-root {{.CACHE_ROOT}}
         --config {{.CONFIG}}
         {{if ne .CHECKPOINT ""}}--checkpoint {{.CHECKPOINT}}{{end}}

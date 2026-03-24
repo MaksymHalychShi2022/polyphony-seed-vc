@@ -18,6 +18,7 @@ import os
 import random
 from pathlib import Path
 
+
 import click
 
 
@@ -71,22 +72,6 @@ def write_csv(csv_path: Path, rows: list[tuple[Path, Path]]) -> None:
 
 
 @click.command(context_settings={"show_default": True})
-@click.argument(
-    "processed_dir",
-    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
-)
-@click.option(
-    "--train-csv",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=Path("train.csv"),
-    help="Path to write train split CSV",
-)
-@click.option(
-    "--val-csv",
-    type=click.Path(dir_okay=False, path_type=Path),
-    default=Path("val.csv"),
-    help="Path to write val split CSV",
-)
 @click.option(
     "--val-ratio",
     type=float,
@@ -101,16 +86,13 @@ def write_csv(csv_path: Path, rows: list[tuple[Path, Path]]) -> None:
     help="Limit total number of pairs before splitting (-1 = all)",
 )
 def main(
-    processed_dir: Path,
-    train_csv: Path,
-    val_csv: Path,
     val_ratio: float,
     seed: int,
     max_pairs: int,
 ) -> None:
-    processed_dir = processed_dir.expanduser().resolve()
-    train_csv = train_csv.expanduser().resolve()
-    val_csv = val_csv.expanduser().resolve()
+    processed_dir = Path(os.environ["DATA_PROCESSED"]).expanduser().resolve()
+    train_csv = (processed_dir / "train.csv").resolve()
+    val_csv = (processed_dir / "val.csv").resolve()
 
     if not (0.0 <= float(val_ratio) <= 1.0):
         raise click.ClickException("--val-ratio must be between 0.0 and 1.0")

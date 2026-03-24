@@ -1,5 +1,7 @@
 import csv
+import os
 from pathlib import Path
+from typing import Literal
 
 import click
 import numpy as np
@@ -60,10 +62,10 @@ def load_source_target_pairs(data_path: str | Path) -> list[tuple[Path, Path]]:
     return pairs
 
 
-class TargetSourcePairsDataset(torch.utils.data.Dataset):
-    def __init__(self, data_path: str | Path, batch_size: int = 1):
-        self.data_path = data_path
-        self.data = load_source_target_pairs(data_path)
+class SourceTargetPairsDataset(torch.utils.data.Dataset):
+    def __init__(self, split: Literal["train", "val"], batch_size: int = 1):
+        data_processed = Path(os.environ["DATA_PROCESSED"])
+        self.data = load_source_target_pairs(data_processed / f"{split}.csv")
 
         assert len(self.data) != 0
         while len(self.data) < batch_size:
@@ -78,59 +80,67 @@ class TargetSourcePairsDataset(torch.utils.data.Dataset):
         return src_path, tgt_path
 
 
-class FeaturesDataset(TargetSourcePairsDataset):
+class FeaturesDataset(SourceTargetPairsDataset):
     def __init__(
         self,
-        data_path: str | Path,
+        split: Literal["train", "val"],
         spect_params: dict,
         whisper_model_name: str,
-        cache_root: str | Path,
         sr: int = 22050,
         batch_size: int = 1,
-        require_cache: bool = True,
+        require_features: bool = True,
         semantic_device: str = "cpu",
         f0_device: str = "cpu",
         embedding_device: str = "cpu",
     ):
-        super().__init__(data_path=data_path, batch_size=batch_size)
-        self.require_cache = require_cache
+        super().__init__(split=split, batch_size=batch_size)
+        features_root = Path(os.environ["DATA_FEATURES"])
+        self.require_features = require_features
         self.mel_extractor = MelSpectrogramExtractor(
             spect_params=spect_params,
             sr=sr,
-            cache_root=cache_root,
-            require_cache=require_cache,
+            features_root=features_root,
+            require_features=require_features,
         )
         self.semantic_extractor = WhisperFeatureExtractor(
             whisper_model_name=whisper_model_name,
-            cache_root=cache_root,
+            features_root=features_root,
             device=semantic_device,
-            require_cache=require_cache,
+            require_features=require_features,
         )
         self.f0_extractor = F0FeatureExtractor(
-            cache_root=cache_root,
+            features_root=features_root,
             device=f0_device,
-            require_cache=require_cache,
+            require_features=require_features,
         )
         self.embedding_extractor = CampplusEmbeddingExtractor(
-            cache_root=cache_root,
+            features_root=features_root,
             device=embedding_device,
-            require_cache=require_cache,
+            require_features=require_features,
         )
 
     def __getitem__(self, idx):
         src_path, tgt_path = super().__getitem__(idx)
-        src_mel = self.mel_extractor.extract(src_path, require_cache=self.require_cache)
-        tgt_mel = self.mel_extractor.extract(tgt_path, require_cache=self.require_cache)
+        src_mel = self.mel_extractor.extract(
+            src_path, require_features=self.require_features
+        )
+        tgt_mel = self.mel_extractor.extract(
+            tgt_path, require_features=self.require_features
+        )
         src_semantic = self.semantic_extractor.extract(
-            src_path, require_cache=self.require_cache
+            src_path, require_features=self.require_features
         )
         tgt_semantic = self.semantic_extractor.extract(
-            tgt_path, require_cache=self.require_cache
+            tgt_path, require_features=self.require_features
         )
-        src_f0 = self.f0_extractor.extract(src_path, require_cache=self.require_cache)
-        tgt_f0 = self.f0_extractor.extract(tgt_path, require_cache=self.require_cache)
+        src_f0 = self.f0_extractor.extract(
+            src_path, require_features=self.require_features
+        )
+        tgt_f0 = self.f0_extractor.extract(
+            tgt_path, require_features=self.require_features
+        )
         tgt_embedding = self.embedding_extractor.extract(
-            tgt_path, require_cache=self.require_cache
+            tgt_path, require_features=self.require_features
         )
         return (
             src_mel,
@@ -237,27 +247,25 @@ def collate_features(batch):
 
 
 def build_features_dataloader(
-    data_path: str | Path,
+    split: Literal["train", "val"],
     spect_params: dict,
     whisper_model_name: str,
-    cache_root: str | Path,
     sr: int,
     batch_size: int = 1,
     num_workers: int = 0,
     shuffle: bool = True,
-    require_cache: bool = True,
+    require_features: bool = True,
     semantic_device: str = "cpu",
     f0_device: str = "cpu",
     embedding_device: str = "cpu",
 ):
     dataset = FeaturesDataset(
-        data_path=data_path,
+        split=split,
         spect_params=spect_params,
         whisper_model_name=whisper_model_name,
-        cache_root=cache_root,
         sr=sr,
         batch_size=batch_size,
-        require_cache=require_cache,
+        require_features=require_features,
         semantic_device=semantic_device,
         f0_device=f0_device,
         embedding_device=embedding_device,
@@ -273,11 +281,11 @@ def build_features_dataloader(
 
 @click.command(help="Iterate FeaturesDataset once and exit.")
 @click.option(
-    "--dataset",
-    "dataset_path",
-    required=True,
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="Path to CSV with source,target rows.",
+    "--split",
+    type=click.Choice(["train", "val"]),
+    default="train",
+    show_default=True,
+    help="Dataset split to iterate (reads DATA_PROCESSED/{split}.csv).",
 )
 @click.option(
     "--config",
@@ -295,18 +303,12 @@ def build_features_dataloader(
     help="Batch size.",
 )
 @click.option(
-    "--cache-root",
-    required=True,
-    type=click.Path(file_okay=False, path_type=Path),
-    help="Cache root. Features are stored under <cache-root>/features/.",
-)
-@click.option(
-    "--require-cache/--allow-compute-missing",
+    "--require-features/--allow-compute-missing",
     default=True,
     show_default=True,
     help=(
-        "When enabled, fail if cache is missing. "
-        "Disable to compute-and-cache missing mels, semantics, f0, and embeddings while iterating."
+        "When enabled, fail if features are missing. "
+        "Disable to compute-and-cache missing features while iterating."
     ),
 )
 @click.option(
@@ -314,28 +316,27 @@ def build_features_dataloader(
     default="cpu",
     show_default=True,
     type=click.Choice(["cpu", "cuda"]),
-    help="Device used for semantic feature extraction when cache is missing.",
+    help="Device used for semantic feature extraction when features are missing.",
 )
 @click.option(
     "--f0-device",
     default="cpu",
     show_default=True,
     type=click.Choice(["cpu", "cuda"]),
-    help="Device used for f0 feature extraction when cache is missing.",
+    help="Device used for f0 feature extraction when features are missing.",
 )
 @click.option(
     "--embedding-device",
     default="cpu",
     show_default=True,
     type=click.Choice(["cpu", "cuda"]),
-    help="Device used for campplus embedding extraction when cache is missing.",
+    help="Device used for campplus embedding extraction when features are missing.",
 )
 def main(
-    dataset_path: Path,
+    split: str,
     config_path: Path,
     batch_size: int,
-    cache_root: Path,
-    require_cache: bool,
+    require_features: bool,
     semantic_device: str,
     f0_device: str,
     embedding_device: str,
@@ -353,15 +354,14 @@ def main(
     whisper_model_name = speech_tokenizer["name"]
 
     dataloader = build_features_dataloader(
-        data_path=str(dataset_path),
+        split=split,
         spect_params=spect_params,
         whisper_model_name=whisper_model_name,
-        cache_root=cache_root,
         sr=sr,
         batch_size=batch_size,
         num_workers=0,
         shuffle=False,
-        require_cache=require_cache,
+        require_features=require_features,
         semantic_device=semantic_device,
         f0_device=f0_device,
         embedding_device=embedding_device,

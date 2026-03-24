@@ -1,0 +1,49 @@
+stages:
+  process-raw:
+    cmd:
+      - uv run --env-file .env python scripts/process_raw_dataset.py --max-songs ${process_raw.max_songs}
+      - uv run --env-file .env python scripts/build_train_val_csv.py
+    deps:
+      - scripts/process_raw_dataset.py
+      - scripts/build_train_val_csv.py
+      - data/raw/tracks
+    params:
+      - process_raw.max_songs
+    outs:
+      - data/processed
+
+  extract-mel:
+    cmd: uv run --env-file .env python scripts/precompute_mel_features.py
+    deps:
+      - scripts/precompute_mel_features.py
+      - data/processed/train.csv
+      - data/processed/val.csv
+    outs:
+      - data/features/mel
+
+  extract-semantic:
+    cmd: uv run --env-file .env python scripts/precompute_semantic_features.py
+    deps:
+      - scripts/precompute_semantic_features.py
+      - data/processed/train.csv
+      - data/processed/val.csv
+    outs:
+      - data/features/semantic
+
+  extract-f0:
+    cmd: uv run --env-file .env python scripts/precompute_f0_features.py
+    deps:
+      - scripts/precompute_f0_features.py
+      - data/processed/train.csv
+      - data/processed/val.csv
+    outs:
+      - data/features/f0
+
+  extract-embedding:
+    cmd: uv run --env-file .env python scripts/precompute_embedding_features.py
+    deps:
+      - scripts/precompute_embedding_features.py
+      - data/processed/train.csv
+      - data/processed/val.csv
+    outs:
+      - data/features/embedding

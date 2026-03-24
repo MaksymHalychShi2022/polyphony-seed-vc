@@ -35,12 +35,48 @@ speakerB/utt2.wav,common_target.wav
 - When MLflow is enabled, the logger uses the existing run folder name (`run_name`) as the MLflow experiment and run name.
 - Progress bar lifecycle is managed by `TrainLogger.progress(...)`.
 
-### Building pairs from the Polyphony Project (multitrack HF dataset)
+### Preprocess dataset
 
-Pull multitrack songs from Hugging Face, mix them, and emit per-chunk `(source,target)` rows for `FT_Dataset`:
+The preprocessing pipeline is managed by DVC. Raw data is tracked manually; processed
+data and feature caches are reproduced on demand.
+
+**First-time setup** — pull raw data from DVC remote:
 
 ```bash
-task prepare-dataset
+dvc pull data/raw.dvc
+```
+
+**Run the full pipeline** (process audio → build CSVs → extract all features):
+
+```bash
+dvc repro
+```
+
+DVC skips stages whose inputs and params haven't changed. To force a full rerun:
+
+```bash
+dvc repro --force
+```
+
+**Tune the number of songs to process** by editing `params.yaml`:
+
+```yaml
+process_raw:
+  max_songs: 10   # set to -1 for all songs
+```
+
+Then `dvc repro` will re-run only the affected stages.
+
+**Run a single stage** (e.g. just re-extract F0 features):
+
+```bash
+dvc repro extract-f0
+```
+
+**Push outputs to remote** after a successful run:
+
+```bash
+dvc push
 ```
 
 Evaluation results on base checkpoint:
@@ -66,6 +102,7 @@ uv run python -m eval.cli --stage all --dataset data/val.csv
 ```
 
 Default artifacts are written under `.eval_cache/<timestamp>/`:
+
 - `results_manifest.json`
 - `metrics_manifest.json`
 - `evaluation_report.html`

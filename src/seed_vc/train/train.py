@@ -22,9 +22,6 @@ class Trainer:
         self,
         model: SeedVCModel,
         config_path: str,
-        train_data_path: str,
-        val_data_path: str | None,
-        cache_root: str,
         logger: TrainLogger,
         batch_size: int = 0,
         num_workers: int = 0,
@@ -32,7 +29,7 @@ class Trainer:
         save_interval: int = 500,
         max_epochs: int = 1000,
         eval_interval: int = 1,
-        require_cache: bool = True,
+        require_features: bool = True,
         device: str = "cuda:0",
     ) -> None:
         self.device = device
@@ -65,38 +62,29 @@ class Trainer:
         whisper_model_name = speech_tokenizer["name"]
 
         self.train_dataloader = build_features_dataloader(
-            data_path=train_data_path,
+            split="train",
             spect_params=preprocess_params["spect_params"],
             whisper_model_name=whisper_model_name,
-            cache_root=cache_root,
             sr=self.sr,
             batch_size=batch_size,
             num_workers=num_workers,
-            require_cache=require_cache,
+            require_features=require_features,
         )
-        if val_data_path:
-            try:
-                self.val_dataloader = build_features_dataloader(
-                    data_path=val_data_path,
-                    spect_params=preprocess_params["spect_params"],
-                    whisper_model_name=whisper_model_name,
-                    cache_root=cache_root,
-                    sr=self.sr,
-                    batch_size=batch_size,
-                    num_workers=num_workers,
-                    shuffle=False,
-                    require_cache=require_cache,
-                )
-                self.has_val = True
-            except ValueError:
-                self.logger.warning(
-                    "No valid validation data found in validation CSV; evaluation will be skipped."
-                )
-                self.val_dataloader = None
-                self.has_val = False
-        else:
+        try:
+            self.val_dataloader = build_features_dataloader(
+                split="val",
+                spect_params=preprocess_params["spect_params"],
+                whisper_model_name=whisper_model_name,
+                sr=self.sr,
+                batch_size=batch_size,
+                num_workers=num_workers,
+                shuffle=False,
+                require_features=require_features,
+            )
+            self.has_val = True
+        except (ValueError, FileNotFoundError):
             self.logger.warning(
-                "No validation dataset provided; evaluation will be skipped."
+                "No valid validation data found; evaluation will be skipped."
             )
             self.val_dataloader = None
             self.has_val = False
@@ -317,10 +305,6 @@ class Trainer:
 
 
 def main(args: argparse.Namespace) -> None:
-    train_data_path = args.train_dataset or args.dataset
-    if not train_data_path:
-        raise ValueError("Provide --train-dataset (or legacy --dataset) for training.")
-
     config = yaml.safe_load(open(args.config))
     logger = TrainLogger(experiment_name=args.run_name)
     logger.start()
@@ -372,9 +356,6 @@ def main(args: argparse.Namespace) -> None:
     trainer = Trainer(
         model=model,
         config_path=args.config,
-        train_data_path=train_data_path,
-        val_data_path=args.val_dataset,
-        cache_root=args.cache_root,
         logger=logger,
         batch_size=args.batch_size,
         steps=args.max_steps,
@@ -382,7 +363,7 @@ def main(args: argparse.Namespace) -> None:
         save_interval=args.save_every,
         num_workers=args.num_workers,
         eval_interval=args.eval_every,
-        require_cache=args.require_cache,
+        require_features=args.require_features,
         device=args.device,
     )
     try:
@@ -407,36 +388,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--pretrained-ckpt", type=str, default=None)
     parser.add_argument(
-        "--train-dataset",
-        type=str,
-        default=None,
-        help="Path to training CSV with source,target rows.",
-    )
-    parser.add_argument(
-        "--val-dataset",
-        type=str,
-        default=None,
-        help="Optional path to validation CSV with source,target rows.",
-    )
-    parser.add_argument(
-        "--dataset",
-        type=str,
-        default=None,
-        help="Legacy alias for --train-dataset.",
-    )
-    parser.add_argument(
-        "--cache-root",
-        type=str,
-        default=".cache",
-        help="Root cache directory. Features are loaded from <cache-root>/features/.",
-    )
-    parser.add_argument(
-        "--require-cache",
+        "--require-features",
         action=argparse.BooleanOptionalAction,
         default=True,
         help=(
-            "Require all feature cache files to exist. "
-            "Use --no-require-cache to allow computing missing features on the fly."
+            "Require all feature files to exist (DATA_FEATURES). "
+            "Use --no-require-features to compute missing features on the fly."
         ),
     )
     parser.add_argument("--run-name", type=str, default="hahahah")

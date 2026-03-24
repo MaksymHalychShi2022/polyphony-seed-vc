@@ -12,6 +12,7 @@ Chunks are aligned by <chunk_id>. Chunks that contain silence are skipped.
 """
 
 import math
+import os
 from pathlib import Path
 
 import click
@@ -198,16 +199,6 @@ def process_song(
 
 
 @click.command(context_settings={"show_default": True})
-@click.argument(
-    "raw_dir",
-    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
-)
-@click.option(
-    "--out-dir",
-    type=click.Path(file_okay=False, dir_okay=True, path_type=Path),
-    default=Path("training_dataset"),
-    help="Output directory (created if missing)",
-)
 @click.option("--sr", type=int, default=44100, help="Target sample rate")
 @click.option("--chunk-seconds", type=float, default=8.0, help="Chunk length (s)")
 @click.option(
@@ -247,8 +238,6 @@ def process_song(
     help="SoundFile FLAC subtype (e.g. PCM_16, PCM_24)",
 )
 def main(
-    raw_dir: Path,
-    out_dir: Path,
     sr: int,
     chunk_seconds: float,
     target_lufs: float,
@@ -258,8 +247,8 @@ def main(
     max_songs: int,
     subtype: str,
 ) -> None:
-    raw_dir = raw_dir.expanduser()
-    out_dir = out_dir.expanduser()
+    raw_dir = Path(os.environ["DATA_RAW"]).expanduser()
+    out_dir = Path(os.environ["DATA_PROCESSED"]).expanduser()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     song_dirs = list_song_dirs(raw_dir)
