@@ -52,7 +52,7 @@ tasks:
       - uv run python -m seed_vc.train.features_dataset --split val
 
   train:
-    desc: "Train using precomputed cached features"
+    desc: "Train using precomputed cached features (Hydra overrides: run_name=x batch_size=4 max_steps=5000)"
     cmds:
       - uv run python -m seed_vc.train.train
 

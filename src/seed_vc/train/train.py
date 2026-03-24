@@ -1,12 +1,11 @@
-import argparse
 import glob
 import os
-import sys
+from pathlib import Path
 from typing import Any, Sequence
 
+import hydra
 import torch
-import torch.multiprocessing as mp
-import yaml
+from omegaconf import DictConfig, OmegaConf
 
 from seed_vc.train.features_dataset import build_features_dataloader
 from seed_vc.train.logger import TrainLogger
@@ -16,12 +15,14 @@ from seed_vc.utils.hf_utils import load_custom_model_from_hf
 
 os.environ["HF_HUB_CACHE"] = "./checkpoints/hf_cache"
 
+_CONFIGS_DIR = str(Path(__file__).parent.parent.parent.parent / "configs")
+
 
 class Trainer:
     def __init__(
         self,
         model: SeedVCModel,
-        config_path: str,
+        config: dict,
         logger: TrainLogger,
         batch_size: int = 0,
         num_workers: int = 0,
@@ -34,7 +35,6 @@ class Trainer:
     ) -> None:
         self.device = device
         self.logger = logger
-        config = yaml.safe_load(open(config_path))
         self.log_dir = str(self.logger.experiment_dir)
         batch_size = config.get("batch_size", 10) if batch_size == 0 else batch_size
         self.max_steps = steps
@@ -304,16 +304,22 @@ class Trainer:
         self.epoch = int(state.get("epoch", 0))
 
 
-def main(args: argparse.Namespace) -> None:
-    config = yaml.safe_load(open(args.config))
-    logger = TrainLogger(experiment_name=args.run_name)
+@hydra.main(config_path=_CONFIGS_DIR, config_name="config", version_base="1.3")
+def main(cfg: DictConfig) -> None:
+    # Convert to plain dict: recursive_munch in commons.py uses isinstance(d, dict)
+    # which does not match OmegaConf DictConfig.
+    config: dict = OmegaConf.to_container(cfg, resolve=True)
+
+    logger = TrainLogger(experiment_name=config["run_name"])
     logger.start()
-    logger.save_artifact(args.config)
+    # Hydra automatically writes runs/<run_name>/.hydra/config.yaml —
+    # no need to manually copy the config file.
 
     model = SeedVCModel(config["model_params"])
 
     latest_checkpoint: str = ""
-    if args.pretrained_ckpt is None:
+    pretrained_ckpt = config.get("pretrained_ckpt")
+    if pretrained_ckpt is None:
         available_checkpoints = glob.glob(
             os.path.join(str(logger.experiment_dir), "DiT_epoch_*_step_*.pth")
         )
@@ -342,10 +348,10 @@ def main(args: argparse.Namespace) -> None:
         else:
             latest_checkpoint = ""
     else:
-        assert os.path.exists(args.pretrained_ckpt), (
-            f"Pretrained checkpoint {args.pretrained_ckpt} not found"
+        assert os.path.exists(pretrained_ckpt), (
+            f"Pretrained checkpoint {pretrained_ckpt} not found"
         )
-        latest_checkpoint = str(args.pretrained_ckpt)
+        latest_checkpoint = str(pretrained_ckpt)
 
     if os.path.exists(str(latest_checkpoint)):
         model.load_weights(str(latest_checkpoint))
@@ -353,18 +359,20 @@ def main(args: argparse.Namespace) -> None:
     else:
         logger.warning("Failed to load any checkpoint, training from scratch.")
 
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
     trainer = Trainer(
         model=model,
-        config_path=args.config,
+        config=config,
         logger=logger,
-        batch_size=args.batch_size,
-        steps=args.max_steps,
-        max_epochs=args.max_epochs,
-        save_interval=args.save_every,
-        num_workers=args.num_workers,
-        eval_interval=args.eval_every,
-        require_features=args.require_features,
-        device=args.device,
+        batch_size=config.get("batch_size", 2),
+        steps=config.get("max_steps", 1000),
+        max_epochs=config.get("max_epochs", 1000),
+        save_interval=config.get("save_every", 100),
+        num_workers=config.get("num_workers", 0),
+        eval_interval=config.get("eval_every", 1),
+        require_features=config.get("require_features", True),
+        device=device,
     )
     try:
         trainer.train()
@@ -376,42 +384,4 @@ def main(args: argparse.Namespace) -> None:
 
 
 if __name__ == "__main__":
-    if sys.platform == "win32":
-        mp.freeze_support()
-        mp.set_start_method("spawn", force=True)
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--config",
-        type=str,
-        default="configs/presets/config_dit_mel_seed_uvit_whisper_base_f0_44k.yml",
-    )
-    parser.add_argument("--pretrained-ckpt", type=str, default=None)
-    parser.add_argument(
-        "--require-features",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help=(
-            "Require all feature files to exist (DATA_FEATURES). "
-            "Use --no-require-features to compute missing features on the fly."
-        ),
-    )
-    parser.add_argument("--run-name", type=str, default="hahahah")
-    parser.add_argument("--batch-size", type=int, default=2)
-    parser.add_argument("--max-steps", type=int, default=1000)
-    parser.add_argument("--max-epochs", type=int, default=1000)
-    parser.add_argument("--save-every", type=int, default=100)
-    parser.add_argument(
-        "--eval-every",
-        type=int,
-        default=1,
-        help="Run evaluation every N epochs.",
-    )
-    parser.add_argument("--num-workers", type=int, default=0)
-    parser.add_argument("--gpu", type=int, help="Which GPU id to use", default=0)
-    args = parser.parse_args()
-    if torch.cuda.is_available():
-        args.device = "cuda"
-    else:
-        args.device = "cpu"
-    main(args)
+    main()
