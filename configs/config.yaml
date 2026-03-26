@@ -12,6 +12,8 @@ eval_every: 1
 num_workers: 0
 require_features: true
 pretrained_ckpt: null
+tensorboard_logging: true
+mlflow_logging: false
 
 hydra:
   run:
