@@ -1,2 +1,19 @@
 process_raw:
+  sr: 44100
+  chunk_seconds: 8.0
+  min_chunk_seconds: 1.0
+  max_chunk_seconds: 30.0
+  target_lufs: -14.0
+  peak: 0.99
+  silence_threshold_db: -30.0
+  max_silence_ratio: 0.05
   max_songs: 10
+  quality_threshold: -1.0
+  singmos_chunk_seconds: 5
+  vad_threshold: 0.5
+  min_vad_region_seconds: 0.5
+  vad_merge_gap_seconds: 0.2
+  vad_pad_seconds: 0.1
+  min_source_activity_ratio: 0.2
+  min_polyphony_ratio: 0.15
+  subtype: PCM_24

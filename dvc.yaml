@@ -1,14 +1,34 @@
 stages:
   process-raw:
     cmd:
-      - uv run --env-file .env python scripts/process_raw_dataset.py --max-songs ${process_raw.max_songs}
+      - >
+        uv run --env-file .env python scripts/process_raw_dataset.py
+        --sr ${process_raw.sr}
+        --chunk-seconds ${process_raw.chunk_seconds}
+        --min-chunk-seconds ${process_raw.min_chunk_seconds}
+        --max-chunk-seconds ${process_raw.max_chunk_seconds}
+        --target-lufs ${process_raw.target_lufs}
+        --peak ${process_raw.peak}
+        --silence-threshold-db ${process_raw.silence_threshold_db}
+        --max-silence-ratio ${process_raw.max_silence_ratio}
+        --max-songs ${process_raw.max_songs}
+        --quality-threshold ${process_raw.quality_threshold}
+        --singmos-chunk-seconds ${process_raw.singmos_chunk_seconds}
+        --vad-threshold ${process_raw.vad_threshold}
+        --min-vad-region-seconds ${process_raw.min_vad_region_seconds}
+        --vad-merge-gap-seconds ${process_raw.vad_merge_gap_seconds}
+        --vad-pad-seconds ${process_raw.vad_pad_seconds}
+        --min-source-activity-ratio ${process_raw.min_source_activity_ratio}
+        --min-polyphony-ratio ${process_raw.min_polyphony_ratio}
+        --subtype ${process_raw.subtype}
       - uv run --env-file .env python scripts/build_train_val_csv.py
     deps:
       - scripts/process_raw_dataset.py
+      - scripts/preprocess_audio_utils.py
       - scripts/build_train_val_csv.py
       - data/raw/tracks
     params:
-      - process_raw.max_songs
+      - process_raw
     outs:
       - data/processed
 

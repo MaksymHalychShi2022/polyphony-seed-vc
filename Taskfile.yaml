@@ -30,7 +30,11 @@ tasks:
     desc: "Process raw dataset and build train/val CSV splits"
     cmds:
       - rm -rf "{{.DATA_PROCESSED}}" | true
-      - uv run python scripts/process_raw_dataset.py --max-songs 10
+      - >
+        uv run python scripts/process_raw_dataset.py
+        --max-songs 10
+        --min-chunk-seconds 1.0
+        --max-chunk-seconds 30.0
       - uv run python scripts/build_train_val_csv.py
 
   extract-features:
