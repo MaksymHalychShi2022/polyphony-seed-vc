@@ -1,5 +1,7 @@
 import json
 import os
+import sys
+import types
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,17 +15,66 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from resemblyzer import VoiceEncoder, preprocess_wav
 from tqdm import tqdm
 
+from seed_vc.features.f0.extractor import F0FeatureExtractor
 from seed_vc.train.features_dataset import build_features_dataloader
 from seed_vc.train.seed_vc_model import SeedVCModel
 from seed_vc.utils.hf_utils import load_custom_model_from_hf
 
 os.environ["HF_HUB_CACHE"] = "./checkpoints/hf_cache"
 
-MANIFEST_SCHEMA_VERSION = 1
-METRIC_KEY = "resemblyzer_similarity"
+MANIFEST_SCHEMA_VERSION = 2
+DEFAULT_METRIC_KEY = "resemblyzer_similarity"
 DEFAULT_RESULTS_MANIFEST_NAME = "results_manifest.json"
 DEFAULT_METRICS_MANIFEST_NAME = "metrics_manifest.json"
 DEFAULT_REPORT_NAME = "evaluation_report.html"
+DEFAULT_LISTENING_GUIDANCE = [
+    "Check whether the generated output preserves the source melody contour and phrasing.",
+    "Listen for choral timbre similarity against the target mix, not just speaker similarity.",
+    "Listen for artifacts such as metallic tone, blurred attacks, unstable pitch, or smeared harmonics.",
+    "Use SingMOS as a naturalness hint when available, not as a replacement for listening review.",
+]
+METRIC_DEFINITIONS: dict[str, dict[str, Any]] = {
+    "resemblyzer_similarity": {
+        "label": "Resemblyzer similarity",
+        "short_label": "Timbre",
+        "category": "Timbre similarity",
+        "description": "Cosine similarity between target and generated Resemblyzer embeddings.",
+        "direction": "higher",
+        "decimals": 4,
+        "optional": False,
+        "enabled_by_default": True,
+    },
+    "f0_rmse": {
+        "label": "F0 RMSE",
+        "short_label": "F0 RMSE",
+        "category": "Melody preservation",
+        "description": "Root-mean-square error between aligned source and generated F0 contours.",
+        "direction": "lower",
+        "decimals": 3,
+        "optional": False,
+        "enabled_by_default": True,
+    },
+    "f0_correlation": {
+        "label": "F0 correlation",
+        "short_label": "F0 corr",
+        "category": "Melody preservation",
+        "description": "Pearson correlation between aligned source and generated F0 contours.",
+        "direction": "higher",
+        "decimals": 4,
+        "optional": False,
+        "enabled_by_default": True,
+    },
+    "singmos_naturalness": {
+        "label": "SingMOS naturalness",
+        "short_label": "SingMOS",
+        "category": "Naturalness",
+        "description": "Mean SingMOS-Pro score across 5-second generated-audio chunks.",
+        "direction": "higher",
+        "decimals": 4,
+        "optional": True,
+        "enabled_by_default": True,
+    },
+}
 
 
 def utc_now_iso() -> str:
@@ -104,6 +155,212 @@ def resolve_default_artifacts(
     resolved_report = report_path or (generated_base / DEFAULT_REPORT_NAME)
 
     return generated_base, resolved_results, resolved_metrics, resolved_report
+
+
+def build_metric_definitions(enable_singmos: bool) -> dict[str, dict[str, Any]]:
+    definitions: dict[str, dict[str, Any]] = {}
+    for key, meta in METRIC_DEFINITIONS.items():
+        copied = dict(meta)
+        copied["key"] = key
+        copied["enabled"] = (
+            bool(enable_singmos) if key == "singmos_naturalness" else True
+        )
+        definitions[key] = copied
+    return definitions
+
+
+def normalize_metric_definitions(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    raw = manifest.get("metric_definitions") or {}
+    if not raw:
+        legacy = build_metric_definitions(enable_singmos=False)
+        if DEFAULT_METRIC_KEY in legacy:
+            return {DEFAULT_METRIC_KEY: legacy[DEFAULT_METRIC_KEY]}
+        return legacy
+
+    definitions: dict[str, dict[str, Any]] = {}
+    for key, meta in raw.items():
+        default_meta = dict(METRIC_DEFINITIONS.get(key, {}))
+        default_meta.update(meta)
+        default_meta["key"] = key
+        default_meta.setdefault("label", key)
+        default_meta.setdefault("short_label", default_meta["label"])
+        default_meta.setdefault("direction", "higher")
+        default_meta.setdefault("decimals", 4)
+        default_meta.setdefault("enabled", True)
+        default_meta.setdefault("optional", False)
+        definitions[key] = default_meta
+    return definitions
+
+
+def metric_sort_value(value: float | None, direction: str) -> float | None:
+    if value is None:
+        return None
+    return value if direction == "higher" else -value
+
+
+def format_metric_value(metric_key: str, value: float | None) -> str:
+    if value is None:
+        return "N/A"
+    meta = METRIC_DEFINITIONS.get(metric_key, {})
+    decimals = int(meta.get("decimals", 4))
+    return f"{value:.{decimals}f}"
+
+
+def build_metric_summary(
+    metric_key: str,
+    values: list[float],
+    status_counts: dict[str, int],
+    metric_meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    meta = dict(METRIC_DEFINITIONS.get(metric_key, {}))
+    if metric_meta:
+        meta.update(metric_meta)
+    summary: dict[str, Any] = {
+        "key": metric_key,
+        "label": meta.get("label", metric_key),
+        "short_label": meta.get("short_label", meta.get("label", metric_key)),
+        "category": meta.get("category", "Other"),
+        "description": meta.get("description"),
+        "direction": meta.get("direction", "higher"),
+        "optional": bool(meta.get("optional", False)),
+        "enabled": bool(meta.get("enabled", True)),
+        "decimals": int(meta.get("decimals", 4)),
+        "status_counts": status_counts,
+        "scored": len(values),
+    }
+    if values:
+        arr = np.asarray(values, dtype=np.float32)
+        summary.update(
+            {
+                "mean": float(arr.mean()),
+                "median": float(np.median(arr)),
+                "std": float(arr.std()),
+                "min": float(arr.min()),
+                "max": float(arr.max()),
+            }
+        )
+    return summary
+
+
+def ensure_item_metric_maps(item: dict[str, Any]) -> None:
+    item.setdefault("metrics", {})
+    item.setdefault("metric_statuses", {})
+    item.setdefault("metric_errors", {})
+
+
+def set_metric_result(
+    item: dict[str, Any],
+    metric_key: str,
+    *,
+    status: str,
+    value: float | None = None,
+    error: str | None = None,
+) -> None:
+    ensure_item_metric_maps(item)
+    if value is None:
+        item["metrics"].pop(metric_key, None)
+    else:
+        item["metrics"][metric_key] = value
+    item["metric_statuses"][metric_key] = status
+    if error:
+        item["metric_errors"][metric_key] = error
+    else:
+        item["metric_errors"].pop(metric_key, None)
+
+
+def load_audio_mono(audio_path: Path) -> tuple[torch.Tensor, int]:
+    waveform, sample_rate = torchaudio.load(audio_path)
+    if waveform.ndim == 2 and waveform.size(0) > 1:
+        waveform = waveform.mean(dim=0, keepdim=True)
+    return waveform, sample_rate
+
+
+def align_f0_contours(
+    source_f0: np.ndarray, generated_f0: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    target_len = min(len(source_f0), len(generated_f0))
+    if target_len < 2:
+        raise ValueError("not enough F0 frames to compare")
+
+    def _resample(values: np.ndarray) -> np.ndarray:
+        if len(values) == target_len:
+            return values.astype(np.float32, copy=False)
+        old_positions = np.linspace(0.0, 1.0, num=len(values), endpoint=True)
+        new_positions = np.linspace(0.0, 1.0, num=target_len, endpoint=True)
+        return np.interp(new_positions, old_positions, values).astype(np.float32)
+
+    return _resample(source_f0), _resample(generated_f0)
+
+
+def compute_f0_metrics(
+    source_f0: np.ndarray, generated_f0: np.ndarray
+) -> dict[str, float]:
+    aligned_source, aligned_generated = align_f0_contours(source_f0, generated_f0)
+    voiced_mask = (aligned_source > 1.0) & (aligned_generated > 1.0)
+    if int(voiced_mask.sum()) < 2:
+        raise ValueError("insufficient shared voiced frames for F0 metrics")
+
+    source_voiced = aligned_source[voiced_mask]
+    generated_voiced = aligned_generated[voiced_mask]
+    rmse = float(np.sqrt(np.mean((source_voiced - generated_voiced) ** 2)))
+
+    if np.std(source_voiced) < 1e-8 or np.std(generated_voiced) < 1e-8:
+        raise ValueError("insufficient F0 variance for correlation")
+    correlation = float(np.corrcoef(source_voiced, generated_voiced)[0, 1])
+    if not np.isfinite(correlation):
+        raise ValueError("invalid F0 correlation")
+
+    return {"f0_rmse": rmse, "f0_correlation": correlation}
+
+
+def prepare_singmos_runtime() -> None:
+    if not hasattr(torchaudio, "set_audio_backend"):
+        torchaudio.set_audio_backend = lambda *a, **kw: None
+    if not hasattr(torchaudio, "sox_effects"):
+        sox_module = types.ModuleType("torchaudio.sox_effects")
+        sox_module.apply_effects_tensor = (
+            lambda waveform, sample_rate, effects, channels_first=True: (
+                waveform,
+                sample_rate,
+            )
+        )
+        sys.modules["torchaudio.sox_effects"] = sox_module
+        torchaudio.sox_effects = sox_module
+
+
+def load_singmos_predictor() -> Any:
+    prepare_singmos_runtime()
+    predictor = torch.hub.load(
+        "South-Twilight/SingMOS:v1.1.2", "singmos_pro", trust_repo=True
+    )
+    predictor.eval()
+    return predictor
+
+
+def compute_singmos_mean(
+    predictor: Any,
+    audio_path: Path,
+    chunk_seconds: int = 5,
+    sample_rate: int = 16000,
+) -> float:
+    waveform, input_sr = load_audio_mono(audio_path)
+    if input_sr != sample_rate:
+        waveform = torchaudio.functional.resample(waveform, input_sr, sample_rate)
+    waveform = waveform.squeeze(0)
+    chunk_samples = chunk_seconds * sample_rate
+    scores: list[float] = []
+    for start in range(0, waveform.numel(), chunk_samples):
+        chunk = waveform[start : start + chunk_samples]
+        if chunk.numel() == 0:
+            continue
+        chunk = chunk.to(torch.float32).unsqueeze(0)
+        length = torch.tensor([chunk.shape[1]], dtype=torch.long)
+        with torch.no_grad():
+            score = predictor(chunk, length)
+        scores.append(float(score.item()))
+    if not scores:
+        raise ValueError("no audio chunks available for SingMOS")
+    return float(np.mean(np.asarray(scores, dtype=np.float32)))
 
 
 def load_vocoder(config: dict[str, Any], device: torch.device):
@@ -403,6 +660,8 @@ def run_generate_results_stage(
             "generation_status": status,
             "error": error,
             "metrics": {},
+            "metric_statuses": {},
+            "metric_errors": {},
         }
         items.append(item)
 
@@ -413,6 +672,8 @@ def run_generate_results_stage(
         "dataset_path": str(dataset_path),
         "config_path": str(config_path),
         "generated_base_dir": str(generated_base),
+        "metric_definitions": build_metric_definitions(enable_singmos=False),
+        "listening_guidance": DEFAULT_LISTENING_GUIDANCE,
         "stages": {
             "generate-results": {
                 "ran_at": utc_now_iso(),
@@ -441,68 +702,182 @@ def run_compute_metrics_stage(
     output_manifest_path: Path,
     device: str,
     strict: bool,
+    enable_singmos: bool,
 ) -> dict[str, Any]:
     manifest = load_json(input_manifest_path)
     items = manifest.get("items", [])
     resolved_device = resolve_device(device)
     encoder = VoiceEncoder(device=resolved_device)
+    metric_definitions = build_metric_definitions(enable_singmos=enable_singmos)
+    manifest["metric_definitions"] = metric_definitions
+    manifest.setdefault("listening_guidance", DEFAULT_LISTENING_GUIDANCE)
 
-    scores: list[float] = []
-    failures = 0
-    missing = 0
+    f0_cache_root = Path(os.environ.get("CACHE_DIR", ".cache/features")) / "eval"
+    f0_extractor = F0FeatureExtractor(
+        features_root=f0_cache_root, device=resolved_device
+    )
+    embedding_cache: dict[str, np.ndarray] = {}
+    f0_cache: dict[str, np.ndarray] = {}
+    metric_values: dict[str, list[float]] = {
+        key: []
+        for key in metric_definitions
+        if metric_definitions[key].get("enabled", True)
+    }
+    metric_status_counts: dict[str, dict[str, int]] = {
+        key: {} for key in metric_definitions
+    }
+    singmos_predictor = None
+    singmos_load_error: str | None = None
+    if enable_singmos:
+        try:
+            singmos_predictor = load_singmos_predictor()
+        except Exception as exc:  # noqa: BLE001
+            singmos_load_error = str(exc)
+
+    def _bump_status(metric_key: str, status: str) -> None:
+        counts = metric_status_counts.setdefault(metric_key, {})
+        counts[status] = counts.get(status, 0) + 1
+
+    def _get_embedding(audio_path: Path) -> np.ndarray:
+        cache_key = str(audio_path.resolve())
+        if cache_key not in embedding_cache:
+            wave = preprocess_wav(audio_path)
+            embedding_cache[cache_key] = np.asarray(
+                encoder.embed_utterance(wave), dtype=np.float32
+            ).reshape(-1)
+        return embedding_cache[cache_key]
+
+    def _get_f0(audio_path: Path) -> np.ndarray:
+        cache_key = str(audio_path.resolve())
+        if cache_key not in f0_cache:
+            f0_cache[cache_key] = (
+                f0_extractor.extract(audio_path).detach().cpu().numpy().reshape(-1)
+            )
+        return f0_cache[cache_key]
 
     for item in tqdm(items, desc="Computing metrics", unit="pair"):
+        ensure_item_metric_maps(item)
         gen_path = Path(item["generated_path"])
+        src_path = Path(item["source_path"])
         tgt_path = Path(item["target_path"])
 
         if not gen_path.exists():
-            item["metric_status"] = "missing_generated"
             item["error"] = f"Missing generated audio: {gen_path}"
-            missing += 1
+            for metric_key, metric_meta in metric_definitions.items():
+                status = (
+                    "disabled"
+                    if not metric_meta.get("enabled", True)
+                    else "missing_generated"
+                )
+                set_metric_result(
+                    item,
+                    metric_key,
+                    status=status,
+                    error=item["error"] if status != "disabled" else None,
+                )
+                _bump_status(metric_key, status)
             if strict:
                 raise FileNotFoundError(item["error"])
             continue
 
         try:
-            tgt_wav = preprocess_wav(tgt_path)
-            gen_wav = preprocess_wav(gen_path)
-            tgt_emb = np.asarray(
-                encoder.embed_utterance(tgt_wav), dtype=np.float32
-            ).reshape(-1)
-            gen_emb = np.asarray(
-                encoder.embed_utterance(gen_wav), dtype=np.float32
-            ).reshape(-1)
+            tgt_emb = _get_embedding(tgt_path)
+            gen_emb = _get_embedding(gen_path)
             score = cosine_similarity(tgt_emb, gen_emb)
-            item.setdefault("metrics", {})[METRIC_KEY] = score
-            item["metric_status"] = "ok"
-            if item.get("error") and item["generation_status"] != "generation_failed":
-                item["error"] = None
-            scores.append(score)
+            set_metric_result(item, DEFAULT_METRIC_KEY, status="ok", value=score)
+            metric_values[DEFAULT_METRIC_KEY].append(score)
+            _bump_status(DEFAULT_METRIC_KEY, "ok")
         except Exception as exc:  # noqa: BLE001
-            item["metric_status"] = "metric_failed"
-            item["error"] = str(exc)
-            failures += 1
+            set_metric_result(
+                item,
+                DEFAULT_METRIC_KEY,
+                status="metric_failed",
+                error=str(exc),
+            )
+            _bump_status(DEFAULT_METRIC_KEY, "metric_failed")
             if strict:
                 raise
 
-    scored = len(scores)
-    summary: dict[str, Any] = {
-        "metric": METRIC_KEY,
-        "scored": scored,
-        "missing": missing,
-        "failed": failures,
-    }
-    if scored > 0:
-        arr = np.asarray(scores)
-        summary.update(
-            {
-                "mean": float(arr.mean()),
-                "median": float(np.median(arr)),
-                "std": float(arr.std()),
-                "min": float(arr.min()),
-                "max": float(arr.max()),
-            }
+        try:
+            source_f0 = _get_f0(src_path)
+            generated_f0 = _get_f0(gen_path)
+            f0_metrics = compute_f0_metrics(source_f0, generated_f0)
+            for metric_key in ("f0_rmse", "f0_correlation"):
+                value = f0_metrics[metric_key]
+                set_metric_result(item, metric_key, status="ok", value=value)
+                metric_values[metric_key].append(value)
+                _bump_status(metric_key, "ok")
+        except Exception as exc:  # noqa: BLE001
+            error_text = str(exc)
+            for metric_key in ("f0_rmse", "f0_correlation"):
+                set_metric_result(
+                    item, metric_key, status="unavailable", error=error_text
+                )
+                _bump_status(metric_key, "unavailable")
+            if strict:
+                raise
+
+        if not metric_definitions["singmos_naturalness"].get("enabled", False):
+            set_metric_result(item, "singmos_naturalness", status="disabled")
+            _bump_status("singmos_naturalness", "disabled")
+        elif singmos_load_error is not None:
+            set_metric_result(
+                item,
+                "singmos_naturalness",
+                status="unavailable",
+                error=singmos_load_error,
+            )
+            _bump_status("singmos_naturalness", "unavailable")
+        else:
+            try:
+                assert singmos_predictor is not None
+                singmos_score = compute_singmos_mean(singmos_predictor, gen_path)
+                set_metric_result(
+                    item,
+                    "singmos_naturalness",
+                    status="ok",
+                    value=singmos_score,
+                )
+                metric_values["singmos_naturalness"].append(singmos_score)
+                _bump_status("singmos_naturalness", "ok")
+            except Exception as exc:  # noqa: BLE001
+                set_metric_result(
+                    item,
+                    "singmos_naturalness",
+                    status="metric_failed",
+                    error=str(exc),
+                )
+                _bump_status("singmos_naturalness", "metric_failed")
+                if strict:
+                    raise
+
+        item["metric_status"] = item["metric_statuses"].get(
+            DEFAULT_METRIC_KEY, "not_run"
         )
+        item["error"] = item["metric_errors"].get(DEFAULT_METRIC_KEY) or item.get(
+            "error"
+        )
+
+    summary_metrics = {
+        key: build_metric_summary(
+            key,
+            metric_values.get(key, []),
+            metric_status_counts.get(key, {}),
+            metric_meta=metric_definitions.get(key),
+        )
+        for key in metric_definitions
+    }
+    default_summary = summary_metrics.get(DEFAULT_METRIC_KEY, {})
+    summary: dict[str, Any] = {
+        "default_metric": DEFAULT_METRIC_KEY,
+        "metrics": summary_metrics,
+        "scored": default_summary.get("scored", 0),
+        "missing": default_summary.get("status_counts", {}).get("missing_generated", 0),
+        "failed": default_summary.get("status_counts", {}).get("metric_failed", 0),
+    }
+    for key in ("mean", "median", "std", "min", "max"):
+        if key in default_summary:
+            summary[key] = default_summary[key]
 
     manifest.setdefault("stages", {})["compute-metrics"] = {
         "ran_at": utc_now_iso(),
@@ -512,7 +887,10 @@ def run_compute_metrics_stage(
 
     save_json(output_manifest_path, manifest)
     click.echo(f"compute-metrics manifest written: {output_manifest_path}")
-    click.echo(f"compute-metrics: scored={scored} missing={missing} failed={failures}")
+    status_parts = []
+    for metric_key, metric_summary in summary_metrics.items():
+        status_parts.append(f"{metric_key}=scored:{metric_summary.get('scored', 0)}")
+    click.echo(f"compute-metrics: {' '.join(status_parts)}")
     return manifest
 
 
@@ -522,14 +900,58 @@ def render_report_html(
     template_path: Path | None,
 ) -> None:
     items = manifest.get("items", [])
+    metric_definitions = normalize_metric_definitions(manifest)
+    summary = manifest.get("stages", {}).get("compute-metrics", {}).get("summary", {})
+    summary_metrics = summary.get("metrics", {})
     rows: list[dict[str, Any]] = []
-    numeric_scores: list[float] = []
+    metric_cards: list[dict[str, Any]] = []
+
+    for metric_key, meta in metric_definitions.items():
+        metric_summary = summary_metrics.get(metric_key, {})
+        mean_value = metric_summary.get("mean")
+        metric_cards.append(
+            {
+                "key": metric_key,
+                "label": meta.get("label", metric_key),
+                "short_label": meta.get("short_label", meta.get("label", metric_key)),
+                "category": meta.get("category", "Other"),
+                "description": meta.get("description"),
+                "direction": meta.get("direction", "higher"),
+                "enabled": meta.get("enabled", True),
+                "mean": mean_value,
+                "mean_display": format_metric_value(metric_key, mean_value),
+                "scored": metric_summary.get("scored", 0),
+                "status_counts": metric_summary.get("status_counts", {}),
+            }
+        )
 
     for item in items:
-        value = item.get("metrics", {}).get(METRIC_KEY)
-        metric_value = float(value) if isinstance(value, (int, float)) else None
-        if metric_value is not None:
-            numeric_scores.append(metric_value)
+        row_metrics: dict[str, Any] = {}
+        for metric_key, meta in metric_definitions.items():
+            value = item.get("metrics", {}).get(metric_key)
+            metric_value = float(value) if isinstance(value, (int, float)) else None
+            status = item.get("metric_statuses", {}).get(metric_key)
+            if status is None:
+                if not meta.get("enabled", True):
+                    status = "disabled"
+                elif metric_value is not None:
+                    status = "ok"
+                else:
+                    status = "not_run"
+            metric_error = item.get("metric_errors", {}).get(metric_key)
+            row_metrics[metric_key] = {
+                "key": metric_key,
+                "label": meta.get("label", metric_key),
+                "short_label": meta.get("short_label", meta.get("label", metric_key)),
+                "value": metric_value,
+                "display": format_metric_value(metric_key, metric_value),
+                "status": status,
+                "error": metric_error,
+                "direction": meta.get("direction", "higher"),
+                "sort_value": metric_sort_value(
+                    metric_value, meta.get("direction", "higher")
+                ),
+            }
         rows.append(
             {
                 "id": item.get("id"),
@@ -538,21 +960,16 @@ def render_report_html(
                 "generated_path": relativize_for_report(
                     item["generated_path"], report_path
                 ),
-                "metric_value": metric_value,
-                "metric_display": f"{metric_value:.4f}"
-                if metric_value is not None
-                else "N/A",
                 "generation_status": item.get("generation_status", "unknown"),
-                "metric_status": item.get("metric_status", "not_run"),
+                "metrics": row_metrics,
                 "error": item.get("error"),
             }
         )
 
-    mean_metric = float(np.mean(np.asarray(numeric_scores))) if numeric_scores else None
     failed_rows = sum(
         1
         for row in rows
-        if row["metric_status"] != "ok"
+        if row["metrics"].get(DEFAULT_METRIC_KEY, {}).get("status") != "ok"
         or row["generation_status"] == "generation_failed"
     )
 
@@ -568,11 +985,16 @@ def render_report_html(
 
     rendered = template.render(
         generated_at=utc_now_iso(),
-        metric_name=METRIC_KEY,
-        mean_metric=mean_metric,
+        default_metric_key=summary.get("default_metric", DEFAULT_METRIC_KEY),
+        metrics=metric_cards,
         total_rows=len(rows),
-        scored_rows=len(numeric_scores),
+        scored_rows=summary_metrics.get(
+            summary.get("default_metric", DEFAULT_METRIC_KEY), {}
+        ).get("scored", 0),
         failed_rows=failed_rows,
+        listening_guidance=manifest.get(
+            "listening_guidance", DEFAULT_LISTENING_GUIDANCE
+        ),
         rows=rows,
     )
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -686,6 +1108,11 @@ def run_build_report_stage(
     help="Raise an error when a generated file is missing or sample processing fails.",
 )
 @click.option(
+    "--enable-singmos/--disable-singmos",
+    default=True,
+    help="Compute SingMOS-Pro naturalness scores during compute-metrics.",
+)
+@click.option(
     "--checkpoint",
     default=None,
     type=click.Path(exists=True, dir_okay=False),
@@ -737,6 +1164,7 @@ def main(
     generated_template: str | None,
     device: str,
     strict: bool,
+    enable_singmos: bool,
     checkpoint: str | None,
     diffusion_steps: int,
     length_adjust: float,
@@ -796,6 +1224,7 @@ def main(
             output_manifest_path=resolved_metrics,
             device=device,
             strict=strict,
+            enable_singmos=enable_singmos,
         )
         return
 
@@ -831,6 +1260,7 @@ def main(
         output_manifest_path=resolved_metrics,
         device=device,
         strict=strict,
+        enable_singmos=enable_singmos,
     )
     manifest = run_build_report_stage(
         metrics_manifest_path=resolved_metrics,
@@ -839,14 +1269,18 @@ def main(
     )
 
     summary = manifest.get("stages", {}).get("compute-metrics", {}).get("summary", {})
-    if summary.get("scored", 0) == 0:
+    summary_metrics = summary.get("metrics", {})
+    default_metric = summary.get("default_metric", DEFAULT_METRIC_KEY)
+    default_summary = summary_metrics.get(default_metric, summary)
+    if default_summary.get("scored", 0) == 0:
         click.echo("No valid samples were evaluated.")
         raise SystemExit(1)
 
     click.echo(
-        f"Resemblyzer cosine similarity -> mean: {summary['mean']:.4f}, "
-        f"median: {summary['median']:.4f}, std: {summary['std']:.4f}, "
-        f"min: {summary['min']:.4f}, max: {summary['max']:.4f}"
+        f"{default_summary.get('label', 'Primary metric')} -> "
+        f"mean: {default_summary['mean']:.4f}, "
+        f"median: {default_summary['median']:.4f}, std: {default_summary['std']:.4f}, "
+        f"min: {default_summary['min']:.4f}, max: {default_summary['max']:.4f}"
     )
     click.echo(f"Report: {resolved_report}")
 

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import shutil
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,11 +13,45 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 ROOT = Path(__file__).resolve().parents[1]
-RUN_A_DIR = ROOT / "data/processed/data/processed/.eval_cache/20260314-032108"
-RUN_B_DIR = ROOT / "data/processed/data/processed/.eval_cache/20260317-160236"
+RUN_A_DIR = ROOT / "data/processed/data/processed/.eval_cache/20260329-174351"
+RUN_B_DIR = ROOT / "data/processed/data/processed/.eval_cache/20260329-172119"
 OUTPUT_DIR = ROOT / "combined-eval-report"
-METRIC_KEY = "resemblyzer_similarity"
+DEFAULT_METRIC_KEY = "resemblyzer_similarity"
 TEMPLATE_PATH = ROOT / "src/eval/templates/eval_comparison_report.html.j2"
+METRIC_DEFINITIONS: dict[str, dict[str, Any]] = {
+    "resemblyzer_similarity": {
+        "label": "Resemblyzer similarity",
+        "short_label": "Timbre",
+        "category": "Timbre similarity",
+        "description": "Cosine similarity between target and generated Resemblyzer embeddings.",
+        "direction": "higher",
+        "decimals": 4,
+    },
+    "f0_rmse": {
+        "label": "F0 RMSE",
+        "short_label": "F0 RMSE",
+        "category": "Melody preservation",
+        "description": "Root-mean-square error between aligned source and generated F0 contours.",
+        "direction": "lower",
+        "decimals": 3,
+    },
+    "f0_correlation": {
+        "label": "F0 correlation",
+        "short_label": "F0 corr",
+        "category": "Melody preservation",
+        "description": "Pearson correlation between aligned source and generated F0 contours.",
+        "direction": "higher",
+        "decimals": 4,
+    },
+    "singmos_naturalness": {
+        "label": "SingMOS naturalness",
+        "short_label": "SingMOS",
+        "category": "Naturalness",
+        "description": "Mean SingMOS-Pro score across generated-audio chunks.",
+        "direction": "higher",
+        "decimals": 4,
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -85,6 +119,52 @@ def build_item_key(item: dict[str, Any]) -> str:
     return f"{rel_to_root(source)}::{rel_to_root(target)}"
 
 
+def normalize_metric_definitions(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    raw = manifest.get("metric_definitions") or {}
+    if not raw:
+        return {
+            DEFAULT_METRIC_KEY: {
+                "key": DEFAULT_METRIC_KEY,
+                **METRIC_DEFINITIONS[DEFAULT_METRIC_KEY],
+            }
+        }
+
+    normalized: dict[str, dict[str, Any]] = {}
+    for key, meta in raw.items():
+        payload = dict(METRIC_DEFINITIONS.get(key, {}))
+        payload.update(meta)
+        payload["key"] = key
+        payload.setdefault("label", key)
+        payload.setdefault("short_label", payload["label"])
+        payload.setdefault("direction", "higher")
+        payload.setdefault("decimals", 4)
+        normalized[key] = payload
+    return normalized
+
+
+def get_metric_summary_map(manifest: dict[str, Any]) -> dict[str, Any]:
+    summary = manifest.get("stages", {}).get("compute-metrics", {}).get("summary", {})
+    if "metrics" in summary:
+        return summary["metrics"]
+    if summary:
+        return {DEFAULT_METRIC_KEY: summary}
+    return {}
+
+
+def format_metric_value(metric_key: str, value: float | None) -> str:
+    if value is None:
+        return "N/A"
+    decimals = int(METRIC_DEFINITIONS.get(metric_key, {}).get("decimals", 4))
+    return f"{value:.{decimals}f}"
+
+
+def metric_sort_value(metric_key: str, value: float | None) -> float | None:
+    if value is None:
+        return None
+    direction = METRIC_DEFINITIONS.get(metric_key, {}).get("direction", "higher")
+    return value if direction == "higher" else -value
+
+
 def validate_run_inputs(run: RunConfig) -> None:
     if not run.cache_dir.is_dir():
         raise SystemExit(f"Run directory not found: {run.cache_dir}")
@@ -99,18 +179,12 @@ def validate_run_inputs(run: RunConfig) -> None:
         raise SystemExit(f"No evaluation items found in: {run.metrics_manifest_path}")
 
     for item in items:
-        for field in ("source_path", "target_path", "generated_path"):
+        for field in ("source_path", "target_path"):
             candidate = resolve_input_path(item[field])
             if not candidate.is_file():
                 raise SystemExit(
                     f"Missing referenced audio for {run.slug}: {field} -> {candidate}"
                 )
-
-
-def copy_file(src: Path, dest: Path) -> str:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest)
-    return dest.relative_to(OUTPUT_DIR).as_posix()
 
 
 def convert_audio_to_mp3(src: Path, dest: Path) -> str:
@@ -140,13 +214,16 @@ def copy_audio_asset(
     category: str,
     filename_hint: str,
     asset_map: dict[str, str],
-) -> str:
+) -> str | None:
     input_key = canonical_input_key(path_str)
+    src = Path(input_key)
+    if not src.is_file():
+        return None
+
     existing = asset_map.get(input_key)
     if existing is not None:
         return existing
 
-    src = Path(input_key)
     source_parent = sanitize_part(src.parent.name)
     filename_stem = Path(filename_hint).stem
     filename = f"{source_parent}__{sanitize_part(filename_stem)}.mp3"
@@ -156,29 +233,25 @@ def copy_audio_asset(
     return copied
 
 
-def format_metric(value: float | None) -> str:
-    if value is None:
-        return "N/A"
-    return f"{value:.4f}"
-
-
-def summarize_metrics(manifest: dict[str, Any]) -> dict[str, Any]:
+def summarize_run_metrics(
+    manifest: dict[str, Any], metric_keys: list[str]
+) -> dict[str, Any]:
     generate_stage = manifest.get("stages", {}).get("generate-results", {})
-    metric_summary = (
-        manifest.get("stages", {}).get("compute-metrics", {}).get("summary", {})
-    )
+    summary_metrics = get_metric_summary_map(manifest)
+    metrics: dict[str, Any] = {}
+    for metric_key in metric_keys:
+        metric_summary = summary_metrics.get(metric_key, {})
+        metrics[metric_key] = {
+            "mean": metric_summary.get("mean"),
+            "mean_display": format_metric_value(metric_key, metric_summary.get("mean")),
+            "scored": metric_summary.get("scored", 0),
+            "status_counts": metric_summary.get("status_counts", {}),
+        }
     return {
         "checkpoint": generate_stage.get("checkpoint"),
         "generated_count": generate_stage.get("generated_count"),
         "total": generate_stage.get("total"),
-        "mean": metric_summary.get("mean"),
-        "median": metric_summary.get("median"),
-        "std": metric_summary.get("std"),
-        "min": metric_summary.get("min"),
-        "max": metric_summary.get("max"),
-        "scored": metric_summary.get("scored"),
-        "failed": metric_summary.get("failed"),
-        "missing": metric_summary.get("missing"),
+        "metrics": metrics,
     }
 
 
@@ -186,26 +259,36 @@ def build_run_entry(
     run: RunConfig,
     item: dict[str, Any],
     asset_map: dict[str, str],
-    *,
-    shared_source_path: str,
-    shared_target_path: str,
+    metric_keys: list[str],
 ) -> dict[str, Any]:
-    metric_value = item.get("metrics", {}).get(METRIC_KEY)
     generated_src = Path(item["generated_path"])
+    generated_path = copy_audio_asset(
+        item["generated_path"],
+        f"{run.slug}/generated",
+        generated_src.name,
+        asset_map,
+    )
+    metrics: dict[str, Any] = {}
+    metric_statuses = item.get("metric_statuses", {})
+    metric_errors = item.get("metric_errors", {})
+    raw_metrics = item.get("metrics", {})
+    for metric_key in metric_keys:
+        value = raw_metrics.get(metric_key)
+        metric_value = float(value) if isinstance(value, (int, float)) else None
+        status = metric_statuses.get(metric_key)
+        if status is None:
+            status = "ok" if metric_value is not None else "not_run"
+        metrics[metric_key] = {
+            "value": metric_value,
+            "display": format_metric_value(metric_key, metric_value),
+            "status": status,
+            "error": metric_errors.get(metric_key),
+            "sort_value": metric_sort_value(metric_key, metric_value),
+        }
     return {
-        "metric_value": metric_value,
-        "metric_display": format_metric(metric_value),
-        "metric_status": item.get("metric_status", "unknown"),
         "generation_status": item.get("generation_status", "unknown"),
-        "error": item.get("error"),
-        "generated_path": copy_audio_asset(
-            item["generated_path"],
-            f"{run.slug}/generated",
-            generated_src.name,
-            asset_map,
-        ),
-        "source_path": shared_source_path,
-        "target_path": shared_target_path,
+        "generated_path": generated_path,
+        "metrics": metrics,
     }
 
 
@@ -222,9 +305,15 @@ def rewrite_manifest_for_bundle(
         build_report["report_path"] = "evaluation_comparison.html"
 
     for item in rewritten.get("items", []):
-        item["source_path"] = asset_map[canonical_input_key(item["source_path"])]
-        item["target_path"] = asset_map[canonical_input_key(item["target_path"])]
-        item["generated_path"] = asset_map[canonical_input_key(item["generated_path"])]
+        item["source_path"] = asset_map.get(
+            canonical_input_key(item["source_path"]), item["source_path"]
+        )
+        item["target_path"] = asset_map.get(
+            canonical_input_key(item["target_path"]), item["target_path"]
+        )
+        item["generated_path"] = asset_map.get(
+            canonical_input_key(item["generated_path"]), item["generated_path"]
+        )
 
     return rewritten
 
@@ -239,30 +328,39 @@ def build_bundle() -> dict[str, Any]:
 
     manifests: dict[str, dict[str, Any]] = {}
     result_manifests: dict[str, dict[str, Any]] = {}
-    run_summaries: dict[str, dict[str, Any]] = {}
     comparison_rows: dict[str, dict[str, Any]] = {}
     asset_map: dict[str, str] = {}
+    metric_definitions: dict[str, dict[str, Any]] = {}
 
     for run in RUNS:
         metrics_manifest = load_json(run.metrics_manifest_path)
         results_manifest = load_json(run.results_manifest_path)
         manifests[run.slug] = metrics_manifest
         result_manifests[run.slug] = results_manifest
+        for key, meta in normalize_metric_definitions(metrics_manifest).items():
+            metric_definitions.setdefault(key, meta)
 
-        run_summaries[run.slug] = {
-            "slug": run.slug,
-            "label": run.label,
-            "cache_name": run.cache_dir.name,
-            "metrics_manifest": f"manifests/{run.slug}/metrics_manifest.json",
-            "results_manifest": f"manifests/{run.slug}/results_manifest.json",
-            **summarize_metrics(metrics_manifest),
-        }
+    metric_keys = [key for key in METRIC_DEFINITIONS if key in metric_definitions] + [
+        key for key in metric_definitions if key not in METRIC_DEFINITIONS
+    ]
 
-        for item in metrics_manifest.get("items", []):
+    run_summaries: list[dict[str, Any]] = []
+    for run in RUNS:
+        run_summaries.append(
+            {
+                "slug": run.slug,
+                "label": run.label,
+                "cache_name": run.cache_dir.name,
+                "metrics_manifest": f"manifests/{run.slug}/metrics_manifest.json",
+                "results_manifest": f"manifests/{run.slug}/results_manifest.json",
+                **summarize_run_metrics(manifests[run.slug], metric_keys),
+            }
+        )
+
+        for item in manifests[run.slug].get("items", []):
             item_key = build_item_key(item)
             source_path = Path(item["source_path"])
             target_path = Path(item["target_path"])
-
             row = comparison_rows.setdefault(
                 item_key,
                 {
@@ -292,28 +390,24 @@ def build_bundle() -> dict[str, Any]:
                     asset_map,
                 )
 
-            row["runs"][run.slug] = build_run_entry(
-                run,
-                item,
-                asset_map,
-                shared_source_path=row["source_path"],
-                shared_target_path=row["target_path"],
-            )
+            row["runs"][run.slug] = build_run_entry(run, item, asset_map, metric_keys)
 
     rows: list[dict[str, Any]] = []
     for index, item_key in enumerate(sorted(comparison_rows), start=1):
         row = comparison_rows[item_key]
         run_a = row["runs"].get("run_a")
         run_b = row["runs"].get("run_b")
-        delta = None
-        if (
-            run_a
-            and run_b
-            and run_a["metric_value"] is not None
-            and run_b["metric_value"] is not None
-        ):
-            delta = run_b["metric_value"] - run_a["metric_value"]
-
+        deltas: dict[str, Any] = {}
+        for metric_key in metric_keys:
+            a_value = run_a["metrics"][metric_key]["value"] if run_a else None
+            b_value = run_b["metrics"][metric_key]["value"] if run_b else None
+            delta_value = None
+            if a_value is not None and b_value is not None:
+                delta_value = float(b_value - a_value)
+            deltas[metric_key] = {
+                "value": delta_value,
+                "display": format_metric_value(metric_key, delta_value),
+            }
         rows.append(
             {
                 "index": index,
@@ -326,8 +420,7 @@ def build_bundle() -> dict[str, Any]:
                 "target_path": row["target_path"],
                 "run_a": run_a,
                 "run_b": run_b,
-                "delta_metric": delta,
-                "delta_display": format_metric(delta) if delta is not None else "N/A",
+                "deltas": deltas,
                 "has_both_runs": run_a is not None and run_b is not None,
             }
         )
@@ -344,9 +437,22 @@ def build_bundle() -> dict[str, Any]:
 
     comparison_manifest = {
         "generated_at": utc_now_iso(),
-        "metric_name": METRIC_KEY,
+        "default_metric_key": DEFAULT_METRIC_KEY,
+        "metrics": [
+            {
+                "key": key,
+                "label": metric_definitions[key].get("label", key),
+                "short_label": metric_definitions[key].get(
+                    "short_label", metric_definitions[key].get("label", key)
+                ),
+                "category": metric_definitions[key].get("category", "Other"),
+                "description": metric_definitions[key].get("description"),
+                "direction": metric_definitions[key].get("direction", "higher"),
+            }
+            for key in metric_keys
+        ],
         "output_dir": OUTPUT_DIR.name,
-        "runs": [run_summaries[run.slug] for run in RUNS],
+        "runs": run_summaries,
         "rows": rows,
     }
     save_json(OUTPUT_DIR / "comparison_manifest.json", comparison_manifest)

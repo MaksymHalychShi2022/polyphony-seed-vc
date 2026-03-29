@@ -79,26 +79,26 @@ dvc repro extract-f0
 dvc push
 ```
 
-Evaluation results on base checkpoint:
-Resemblyzer cosine similarity -> mean: 0.7514, median: 0.7556, std: 0.0400, min: 0.6661, max: 0.8223
-
-Evaluation results on finetuned checkpoint:
-Resemblyzer cosine similarity -> mean: 0.8342, median: 0.8342, std: 0.0259, min: 0.7490, max: 0.8727
+Evaluation summaries now combine several views of quality:
+- `resemblyzer_similarity` for target-vs-generated timbre similarity
+- `f0_rmse` for source-vs-generated melody error
+- `f0_correlation` for source-vs-generated melody contour similarity
+- `singmos_naturalness` for no-reference singing naturalness
 
 ## Staged evaluation workflow
 
 The evaluation command now supports resumable stages:
 
 ```bash
-uv run python -m eval.cli --stage generate-results --dataset data/val.csv
-uv run python -m eval.cli --stage compute-metrics --dataset data/val.csv
-uv run python -m eval.cli --stage build-report --dataset data/val.csv
+uv run python -m eval.cli --stage generate-results --split val
+uv run python -m eval.cli --stage compute-metrics --split val
+uv run python -m eval.cli --stage build-report --split val
 ```
 
 Run all stages end-to-end:
 
 ```bash
-uv run python -m eval.cli --stage all --dataset data/val.csv
+uv run python -m eval.cli --stage all --split val
 ```
 
 Default artifacts are written under `.eval_cache/<timestamp>/`:
@@ -106,3 +106,11 @@ Default artifacts are written under `.eval_cache/<timestamp>/`:
 - `results_manifest.json`
 - `metrics_manifest.json`
 - `evaluation_report.html`
+
+`metrics_manifest.json` now stores per-item metric values, per-metric statuses, and aggregate summaries for the supported evaluation metrics. The HTML report lets you switch the metric used for sorting/filtering while still auditioning source, target, and generated audio.
+
+SingMOS-Pro scoring is enabled by default during metric computation. Disable it only if you intentionally want to skip the naturalness metric:
+
+```bash
+uv run python -m eval.cli --stage compute-metrics --split val --disable-singmos
+```

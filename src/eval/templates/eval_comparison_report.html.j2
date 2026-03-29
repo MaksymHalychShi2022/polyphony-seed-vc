@@ -6,17 +6,16 @@
   <title>Seed-VC Comparison Report</title>
   <style>
     :root {
-      --bg: #f4efe6;
-      --panel: #fffdf8;
-      --panel-strong: #f7f1e5;
-      --ink: #1f2933;
+      --bg: #f5efe7;
+      --panel: rgba(255, 253, 248, 0.96);
+      --ink: #1f2937;
       --muted: #6b7280;
-      --line: #d8d1c4;
+      --line: #ddd3c6;
       --accent: #0f766e;
-      --accent-soft: #d9f2ef;
-      --bad: #b42318;
+      --accent-soft: #d8f3ef;
       --warn: #b45309;
-      --shadow: 0 12px 28px rgba(35, 31, 32, 0.08);
+      --bad: #b91c1c;
+      --shadow: 0 12px 28px rgba(17, 24, 39, 0.08);
     }
     * { box-sizing: border-box; }
     body {
@@ -24,32 +23,28 @@
       font-family: "Source Sans 3", "Segoe UI", sans-serif;
       color: var(--ink);
       background:
-        radial-gradient(circle at top left, rgba(15, 118, 110, 0.12), transparent 28%),
-        radial-gradient(circle at top right, rgba(217, 242, 239, 0.8), transparent 30%),
-        linear-gradient(180deg, #f8f3ec 0%, var(--bg) 100%);
+        radial-gradient(circle at top right, rgba(15, 118, 110, 0.10), transparent 25%),
+        linear-gradient(180deg, #faf7f2 0%, var(--bg) 100%);
     }
     .wrap {
       max-width: 1480px;
       margin: 0 auto;
       padding: 24px;
     }
-    .hero, .controls, .table-wrap {
-      background: rgba(255, 253, 248, 0.92);
+    .hero, .panel {
+      background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 18px;
       box-shadow: var(--shadow);
     }
     .hero {
       padding: 24px;
-      margin-bottom: 18px;
-      background:
-        linear-gradient(135deg, rgba(255, 244, 214, 0.9), rgba(217, 242, 239, 0.94)),
-        var(--panel);
+      margin-bottom: 16px;
+      background: linear-gradient(135deg, rgba(255, 245, 214, 0.92), rgba(216, 243, 239, 0.96));
     }
     h1 {
-      margin: 0 0 10px;
+      margin: 0 0 8px;
       font-size: 34px;
-      letter-spacing: 0.01em;
     }
     .meta, .run-meta {
       display: flex;
@@ -58,66 +53,73 @@
       color: var(--muted);
       font-size: 14px;
     }
-    .run-grid {
+    .metric-grid, .run-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 14px;
-      margin: 18px 0;
+      gap: 12px;
+      margin: 16px 0;
     }
-    .run-card {
+    .metric-grid {
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+    .run-grid {
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    }
+    .metric-card, .run-card {
       background: var(--panel);
       border: 1px solid var(--line);
       border-radius: 16px;
-      padding: 16px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+    .metric-card.active {
+      border-color: rgba(15, 118, 110, 0.45);
+      background: linear-gradient(180deg, rgba(216, 243, 239, 0.75), rgba(255, 255, 255, 0.92));
+    }
+    .eyebrow {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .value {
+      font-size: 28px;
+      font-weight: 700;
+      margin-top: 4px;
     }
     .run-card h2 {
       margin: 0 0 8px;
       font-size: 22px;
     }
     .checkpoint {
-      font-family: "Fira Code", "SFMono-Regular", monospace;
+      font-family: "Fira Code", monospace;
       font-size: 12px;
       color: var(--muted);
       overflow-wrap: anywhere;
-      margin-bottom: 12px;
+      margin-bottom: 8px;
     }
-    .metrics {
+    .run-metric-strip {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
       gap: 10px;
-    }
-    .metric-card {
-      padding: 12px;
-      border-radius: 12px;
-      border: 1px solid var(--line);
-      background: var(--panel-strong);
-    }
-    .metric-card .label {
-      font-size: 12px;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-    .metric-card .value {
-      font-size: 24px;
-      font-weight: 700;
-      margin-top: 4px;
-      color: var(--accent);
-    }
-    .summary-strip {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 12px;
       margin-top: 12px;
     }
-    .summary-strip .metric-card { background: rgba(255, 255, 255, 0.8); }
+    .mini-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.65);
+    }
+    .mini-card .mini-value {
+      font-size: 20px;
+      font-weight: 700;
+    }
     .controls {
-      padding: 16px;
-      margin-bottom: 14px;
       display: flex;
       flex-wrap: wrap;
       gap: 14px;
       align-items: end;
+      padding: 16px;
+      margin-bottom: 14px;
     }
     .controls label {
       display: flex;
@@ -131,14 +133,14 @@
       border-radius: 10px;
       padding: 9px 11px;
       font: inherit;
-      background: #fff;
+      background: white;
       color: var(--ink);
     }
     button {
       cursor: pointer;
       background: var(--accent-soft);
       color: #0b5c55;
-      font-weight: 600;
+      font-weight: 700;
     }
     .table-wrap {
       overflow-x: auto;
@@ -146,66 +148,64 @@
     table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 1180px;
+      min-width: 1280px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
     }
-    thead {
-      background: #f1ece3;
-    }
+    thead { background: #f2ede5; }
     th, td {
       padding: 12px;
-      border-bottom: 1px solid #ebe4d6;
-      vertical-align: top;
+      border-bottom: 1px solid #ece4d8;
       text-align: left;
+      vertical-align: top;
       font-size: 14px;
     }
     th {
       font-size: 12px;
-      letter-spacing: 0.05em;
       text-transform: uppercase;
+      letter-spacing: 0.05em;
       color: #475467;
     }
-    tr.hidden { display: none; }
     .file-label {
       font-weight: 700;
-      margin-bottom: 4px;
-    }
-    .subtle {
-      color: var(--muted);
-      font-size: 12px;
-      overflow-wrap: anywhere;
+      margin-bottom: 6px;
     }
     .metric-pill {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      padding: 6px 10px;
+      gap: 6px;
       border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 700;
       background: var(--accent-soft);
       color: #0b5c55;
-      font-weight: 700;
-      margin-bottom: 6px;
+      margin: 0 8px 8px 0;
     }
     .metric-pill.na {
       background: #f3f4f6;
       color: var(--muted);
     }
-    .metric-pill.delta-up { background: #d9f2ef; }
-    .metric-pill.delta-down { background: #fde9d8; color: #9a3412; }
+    .metric-pill.warn {
+      background: #fff7ed;
+      color: var(--warn);
+    }
+    .metric-pill.bad {
+      background: #fee2e2;
+      color: var(--bad);
+    }
+    .delta-positive { color: #166534; }
+    .delta-negative { color: #9a3412; }
     .status {
       color: var(--muted);
       font-size: 12px;
       line-height: 1.5;
+      margin-top: 6px;
     }
     .status.error { color: var(--bad); }
-    .missing {
-      padding: 10px;
-      border-radius: 12px;
-      background: #fff7ed;
-      border: 1px dashed #f1b98b;
-      color: var(--warn);
-      font-weight: 600;
-      font-size: 13px;
-    }
     audio {
       width: 190px;
       max-width: 100%;
@@ -215,7 +215,6 @@
     @media (max-width: 900px) {
       .wrap { padding: 12px; }
       h1 { font-size: 28px; }
-      .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       audio { width: 150px; }
     }
   </style>
@@ -226,76 +225,76 @@
       <h1>Seed-VC Evaluation Comparison</h1>
       <div class="meta">
         <span>Generated: {{ generated_at }}</span>
-        <span>Metric: {{ metric_name }}</span>
-        <span>Total comparison rows: {{ rows|length }}</span>
-      </div>
-      <div class="run-grid">
-        {% for run in runs %}
-        <article class="run-card">
-          <h2>{{ run.label }}</h2>
-          <div class="checkpoint">{{ run.checkpoint or "Checkpoint unavailable" }}</div>
-          <div class="metrics">
-            <div class="metric-card">
-              <div class="label">Mean</div>
-              <div class="value">{{ "%.4f"|format(run.mean) if run.mean is not none else "N/A" }}</div>
-            </div>
-            <div class="metric-card">
-              <div class="label">Rows scored</div>
-              <div class="value">{{ run.scored if run.scored is not none else "N/A" }}</div>
-            </div>
-            <div class="metric-card">
-              <div class="label">Generated</div>
-              <div class="value">{{ run.generated_count if run.generated_count is not none else "N/A" }}</div>
-            </div>
-          </div>
-          <div class="run-meta" style="margin-top:12px;">
-            <span>Cache: {{ run.cache_name }}</span>
-            <span><a href="{{ run.metrics_manifest }}">metrics_manifest.json</a></span>
-            <span><a href="{{ run.results_manifest }}">results_manifest.json</a></span>
-          </div>
-        </article>
-        {% endfor %}
-      </div>
-      <div class="summary-strip">
-        <div class="metric-card">
-          <div class="label">Rows in both runs</div>
-          <div class="value">{{ rows | selectattr('has_both_runs') | list | length }}</div>
-        </div>
-        <div class="metric-card">
-          <div class="label">Only in Run A</div>
-          <div class="value">{{ rows | rejectattr('run_b') | list | length }}</div>
-        </div>
-        <div class="metric-card">
-          <div class="label">Only in Run B</div>
-          <div class="value">{{ rows | rejectattr('run_a') | list | length }}</div>
-        </div>
+        <span>Total rows: {{ rows|length }}</span>
+        <span>Default metric: {{ default_metric_key }}</span>
       </div>
     </section>
 
-    <section class="controls">
+    <section class="metric-grid">
+      {% for metric in metrics %}
+      <article class="metric-card" data-metric-card="{{ metric.key }}">
+        <div class="eyebrow">{{ metric.category }}</div>
+        <div class="value">{{ metric.label }}</div>
+        <div class="status">{{ metric.description }}</div>
+        <div class="status">{{ metric.direction }} is better</div>
+      </article>
+      {% endfor %}
+    </section>
+
+    <section class="run-grid">
+      {% for run in runs %}
+      <article class="run-card">
+        <h2>{{ run.label }}</h2>
+        <div class="checkpoint">{{ run.checkpoint or "Checkpoint unavailable" }}</div>
+        <div class="run-meta">
+          <span>Cache: {{ run.cache_name }}</span>
+          <span>Generated: {{ run.generated_count }}</span>
+          <span>Total: {{ run.total }}</span>
+          <span><a href="{{ run.metrics_manifest }}">metrics_manifest.json</a></span>
+          <span><a href="{{ run.results_manifest }}">results_manifest.json</a></span>
+        </div>
+        <div class="run-metric-strip">
+          {% for metric in metrics %}
+          {% set summary = run.metrics.get(metric.key, {}) %}
+          <div class="mini-card">
+            <div class="eyebrow">{{ metric.short_label }}</div>
+            <div class="mini-value">{{ summary.mean_display or "N/A" }}</div>
+            <div class="status">Rows scored: {{ summary.scored or 0 }}</div>
+          </div>
+          {% endfor %}
+        </div>
+      </article>
+      {% endfor %}
+    </section>
+
+    <section class="panel controls">
+      <label>
+        Metric focus
+        <select id="metricSelect"></select>
+      </label>
       <label>
         Sort rows
         <select id="sortOrder">
-          <option value="delta-desc">Delta high to low</option>
-          <option value="delta-asc">Delta low to high</option>
-          <option value="run-b-desc">Run B high to low</option>
-          <option value="run-a-desc">Run A high to low</option>
+          <option value="delta-best">Largest improvement</option>
+          <option value="delta-worst">Largest regression</option>
+          <option value="run-b-best">Best Run B</option>
+          <option value="run-a-best">Best Run A</option>
           <option value="original">Original order</option>
         </select>
-      </label>
-      <label>
-        Min run A metric
-        <input id="minRunA" type="number" step="0.0001" placeholder="e.g. 0.8000">
-      </label>
-      <label>
-        Min run B metric
-        <input id="minRunB" type="number" step="0.0001" placeholder="e.g. 0.8000">
       </label>
       <label>
         Require both runs
         <select id="requireBoth">
           <option value="no">No</option>
           <option value="yes">Yes</option>
+        </select>
+      </label>
+      <label>
+        Status filter
+        <select id="statusFilter">
+          <option value="all">All rows</option>
+          <option value="ok">Only scored in both runs</option>
+          <option value="issues">Only rows with issues</option>
         </select>
       </label>
       <button id="clearFilters" type="button">Reset</button>
@@ -315,150 +314,157 @@
             <th>Delta</th>
           </tr>
         </thead>
-        <tbody id="rows">
-          {% for row in rows %}
-          <tr
-            data-order="{{ loop.index0 }}"
-            data-run-a="{{ row.run_a.metric_value if row.run_a and row.run_a.metric_value is not none else '' }}"
-            data-run-b="{{ row.run_b.metric_value if row.run_b and row.run_b.metric_value is not none else '' }}"
-            data-delta="{{ row.delta_metric if row.delta_metric is not none else '' }}"
-            data-has-both="{{ 'true' if row.has_both_runs else 'false' }}"
-          >
-            <td>{{ row.index }}</td>
-            <td>
-              <div class="file-label">{{ row.source_name }}</div>
-              <div class="subtle">target: {{ row.target_name }}</div>
-            </td>
-            <td>
-              <div class="file-label">{{ row.source_label }}</div>
-              <audio controls preload="none" src="{{ row.source_path }}"></audio>
-            </td>
-            <td>
-              <div class="file-label">{{ row.target_label }}</div>
-              <audio controls preload="none" src="{{ row.target_path }}"></audio>
-            </td>
-            <td>
-              {% if row.run_a %}
-              <div class="metric-pill{% if row.run_a.metric_value is none %} na{% endif %}">{{ row.run_a.metric_display }}</div>
-              <div class="status{% if row.run_a.error %} error{% endif %}">
-                generation={{ row.run_a.generation_status }}, metric={{ row.run_a.metric_status }}
-                {% if row.run_a.error %}<br>{{ row.run_a.error }}{% endif %}
-              </div>
-              <audio controls preload="none" src="{{ row.run_a.generated_path }}"></audio>
-              {% else %}
-              <div class="missing">Missing from Run A</div>
-              {% endif %}
-            </td>
-            <td>
-              {% if row.run_b %}
-              <div class="metric-pill{% if row.run_b.metric_value is none %} na{% endif %}">{{ row.run_b.metric_display }}</div>
-              <div class="status{% if row.run_b.error %} error{% endif %}">
-                generation={{ row.run_b.generation_status }}, metric={{ row.run_b.metric_status }}
-                {% if row.run_b.error %}<br>{{ row.run_b.error }}{% endif %}
-              </div>
-              <audio controls preload="none" src="{{ row.run_b.generated_path }}"></audio>
-              {% else %}
-              <div class="missing">Missing from Run B</div>
-              {% endif %}
-            </td>
-            <td>
-              {% set delta_class = ' na' %}
-              {% if row.delta_metric is not none and row.delta_metric > 0 %}
-                {% set delta_class = ' delta-up' %}
-              {% elif row.delta_metric is not none and row.delta_metric < 0 %}
-                {% set delta_class = ' delta-down' %}
-              {% endif %}
-              <div class="metric-pill{{ delta_class }}">{{ row.delta_display }}</div>
-              <div class="subtle">Run B - Run A</div>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
+        <tbody id="rows"></tbody>
       </table>
     </section>
   </div>
 
   <script>
-    const tbody = document.getElementById('rows');
-    const rows = Array.from(tbody.querySelectorAll('tr'));
+    const defaultMetricKey = {{ default_metric_key|tojson }};
+    const metrics = {{ metrics|tojson }};
+    const rows = {{ rows|tojson }};
+    const metricSelect = document.getElementById('metricSelect');
     const sortOrder = document.getElementById('sortOrder');
-    const minRunA = document.getElementById('minRunA');
-    const minRunB = document.getElementById('minRunB');
     const requireBoth = document.getElementById('requireBoth');
+    const statusFilter = document.getElementById('statusFilter');
     const clearFilters = document.getElementById('clearFilters');
+    const tbody = document.getElementById('rows');
     const visibleCount = document.getElementById('visibleCount');
 
-    function parseNumber(value) {
-      if (value === '') return null;
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : null;
+    for (const metric of metrics) {
+      const option = document.createElement('option');
+      option.value = metric.key;
+      option.textContent = `${metric.label} (${metric.direction} is better)`;
+      if (metric.key === defaultMetricKey) option.selected = true;
+      metricSelect.appendChild(option);
     }
 
-    function rowNumber(row, key) {
-      return parseNumber(row.dataset[key]);
+    function metricMeta(key) {
+      return metrics.find((metric) => metric.key === key) || { key, label: key, short_label: key, direction: 'higher' };
     }
 
-    function updateView() {
-      const minA = parseNumber(minRunA.value);
-      const minB = parseNumber(minRunB.value);
-      const needBoth = requireBoth.value === 'yes';
+    function runMetric(run, key) {
+      if (!run) return { display: 'N/A', status: 'missing_run', error: null, value: null, sort_value: null };
+      return run.metrics[key] || { display: 'N/A', status: 'not_run', error: null, value: null, sort_value: null };
+    }
 
-      rows.forEach((row) => {
-        const runA = rowNumber(row, 'runA');
-        const runB = rowNumber(row, 'runB');
-        const hasBoth = row.dataset.hasBoth === 'true';
-        const hide =
-          (minA !== null && (runA === null || runA < minA)) ||
-          (minB !== null && (runB === null || runB < minB)) ||
-          (needBoth && !hasBoth);
-        row.classList.toggle('hidden', hide);
+    function metricPillClass(cell) {
+      if (cell.status === 'ok') return 'metric-pill';
+      if (cell.status === 'disabled' || cell.status === 'unavailable' || cell.status === 'not_run' || cell.status === 'missing_run') return 'metric-pill na';
+      if (cell.status === 'missing_generated') return 'metric-pill warn';
+      return 'metric-pill bad';
+    }
+
+    function deltaClass(value) {
+      if (value === null) return 'metric-pill na';
+      if (value > 0) return 'metric-pill delta-positive';
+      if (value < 0) return 'metric-pill delta-negative';
+      return 'metric-pill';
+    }
+
+    function renderRows() {
+      const selectedMetric = metricSelect.value;
+      for (const card of document.querySelectorAll('[data-metric-card]')) {
+        card.classList.toggle('active', card.dataset.metricCard === selectedMetric);
+      }
+
+      const filtered = rows.filter((row) => {
+        const runA = runMetric(row.run_a, selectedMetric);
+        const runB = runMetric(row.run_b, selectedMetric);
+        if (requireBoth.value === 'yes' && !row.has_both_runs) return false;
+        if (statusFilter.value === 'ok') return runA.status === 'ok' && runB.status === 'ok';
+        if (statusFilter.value === 'issues') return runA.status !== 'ok' || runB.status !== 'ok';
+        return true;
       });
 
-      const ordered = [...rows];
-      const mode = sortOrder.value;
-      const keyMap = {
-        'delta-desc': ['delta', -1],
-        'delta-asc': ['delta', 1],
-        'run-b-desc': ['runB', -1],
-        'run-a-desc': ['runA', -1],
-      };
-
-      if (mode === 'original') {
-        ordered.sort((a, b) => Number(a.dataset.order) - Number(b.dataset.order));
-      } else {
-        const [key, direction] = keyMap[mode];
-        ordered.sort((a, b) => {
-          const left = rowNumber(a, key);
-          const right = rowNumber(b, key);
-          if (left === null && right === null) return Number(a.dataset.order) - Number(b.dataset.order);
-          if (left === null) return 1;
-          if (right === null) return -1;
-          if (left === right) return Number(a.dataset.order) - Number(b.dataset.order);
-          return left < right ? direction : -direction;
+      if (sortOrder.value !== 'original') {
+        filtered.sort((a, b) => {
+          const aRunA = runMetric(a.run_a, selectedMetric);
+          const aRunB = runMetric(a.run_b, selectedMetric);
+          const bRunA = runMetric(b.run_a, selectedMetric);
+          const bRunB = runMetric(b.run_b, selectedMetric);
+          const aDelta = a.deltas[selectedMetric]?.value;
+          const bDelta = b.deltas[selectedMetric]?.value;
+          const score = (mode, left, right) => {
+            if (left === null && right === null) return 0;
+            if (left === null) return 1;
+            if (right === null) return -1;
+            return mode === 'desc' ? right - left : left - right;
+          };
+          if (sortOrder.value === 'delta-best') return score('desc', aDelta, bDelta);
+          if (sortOrder.value === 'delta-worst') return score('asc', aDelta, bDelta);
+          if (sortOrder.value === 'run-b-best') return score('desc', aRunB.sort_value, bRunB.sort_value);
+          if (sortOrder.value === 'run-a-best') return score('desc', aRunA.sort_value, bRunA.sort_value);
+          return 0;
         });
       }
 
       tbody.innerHTML = '';
-      ordered.forEach((row) => tbody.appendChild(row));
+      filtered.forEach((row, index) => {
+        const runA = runMetric(row.run_a, selectedMetric);
+        const runB = runMetric(row.run_b, selectedMetric);
+        const delta = row.deltas[selectedMetric] || { display: 'N/A', value: null };
+        const runAStrip = metrics.map((metric) => {
+          const cell = runMetric(row.run_a, metric.key);
+          return `<span class="${metricPillClass(cell)}">${metric.short_label}: ${cell.display}</span>`;
+        }).join('');
+        const runBStrip = metrics.map((metric) => {
+          const cell = runMetric(row.run_b, metric.key);
+          return `<span class="${metricPillClass(cell)}">${metric.short_label}: ${cell.display}</span>`;
+        }).join('');
 
-      const visible = rows.filter((row) => !row.classList.contains('hidden')).length;
-      visibleCount.textContent = `${visible} of ${rows.length} rows visible`;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${index + 1}</td>
+          <td>
+            <div class="file-label">${row.source_name}</div>
+            <div class="status">target: ${row.target_name}</div>
+          </td>
+          <td>
+            <div class="file-label">Source</div>
+            <audio controls preload="none" src="${row.source_path || ''}"></audio>
+          </td>
+          <td>
+            <div class="file-label">Target</div>
+            <audio controls preload="none" src="${row.target_path || ''}"></audio>
+          </td>
+          <td>
+            <div class="file-label">${metricMeta(selectedMetric).label}: ${runA.display}</div>
+            <div class="status ${runA.error ? 'error' : ''}">status=${runA.status}${runA.error ? `<br>${runA.error}` : ''}</div>
+            <div>${runAStrip}</div>
+            ${row.run_a && row.run_a.generated_path ? `<audio controls preload="none" src="${row.run_a.generated_path}"></audio>` : '<div class="status">Generated audio unavailable</div>'}
+          </td>
+          <td>
+            <div class="file-label">${metricMeta(selectedMetric).label}: ${runB.display}</div>
+            <div class="status ${runB.error ? 'error' : ''}">status=${runB.status}${runB.error ? `<br>${runB.error}` : ''}</div>
+            <div>${runBStrip}</div>
+            ${row.run_b && row.run_b.generated_path ? `<audio controls preload="none" src="${row.run_b.generated_path}"></audio>` : '<div class="status">Generated audio unavailable</div>'}
+          </td>
+          <td>
+            <div class="file-label">Run B - Run A</div>
+            <div class="${deltaClass(delta.value)}">${delta.display}</div>
+            <div class="status">Shown only when both runs have the selected metric.</div>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      visibleCount.textContent = `Showing ${filtered.length} / ${rows.length} rows for ${metricMeta(selectedMetric).label}`;
     }
 
-    [sortOrder, minRunA, minRunB, requireBoth].forEach((el) => {
-      el.addEventListener('input', updateView);
-      el.addEventListener('change', updateView);
-    });
-
+    metricSelect.addEventListener('change', renderRows);
+    sortOrder.addEventListener('change', renderRows);
+    requireBoth.addEventListener('change', renderRows);
+    statusFilter.addEventListener('change', renderRows);
     clearFilters.addEventListener('click', () => {
-      sortOrder.value = 'delta-desc';
-      minRunA.value = '';
-      minRunB.value = '';
+      metricSelect.value = defaultMetricKey;
+      sortOrder.value = 'delta-best';
       requireBoth.value = 'no';
-      updateView();
+      statusFilter.value = 'all';
+      renderRows();
     });
 
-    updateView();
+    renderRows();
   </script>
 </body>
 </html>

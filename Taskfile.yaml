@@ -41,7 +41,7 @@ tasks:
       - uv run python scripts/precompute_f0_features.py
       - uv run python scripts/precompute_embedding_features.py
 
-  iterate-ft-train:
+  iterate-ft-train: 
     desc: "Iterate cached feature train split once and exit"
     cmds:
       - uv run python -m seed_vc.train.features_dataset --split train
@@ -65,12 +65,56 @@ tasks:
       - uv run mlflow ui --backend-store-uri "{{.MLFLOW_TRACKING_URI}}"
 
   eval:
-    desc: "Run eval with FeaturesDataset + SeedVCModel."
+    desc: "Run the full staged evaluation pipeline"
     vars:
       CONFIG: configs/presets/config_dit_mel_seed_uvit_whisper_base_f0_44k.yml
-      CHECKPOINT: runs/my_run/DiT_epoch_00007_step_00800.pth
+      # CHECKPOINT: runs/my_run/DiT_epoch_00007_step_00800.pth
+      SPLIT: val
     cmds:
       - >
         uv run python -m eval.cli
+        --stage all
+        --split {{.SPLIT}}
+        --config {{.CONFIG}}
+        # {{if ne .CHECKPOINT ""}}--checkpoint {{.CHECKPOINT}}{{end}}
+
+  eval:generate:
+    desc: "Run only the generate-results evaluation stage"
+    vars:
+      CONFIG: configs/presets/config_dit_mel_seed_uvit_whisper_base_f0_44k.yml
+      CHECKPOINT: runs/my_run/DiT_epoch_00007_step_00800.pth
+      SPLIT: val
+    cmds:
+      - >
+        uv run python -m eval.cli
+        --stage generate-results
+        --split {{.SPLIT}}
         --config {{.CONFIG}}
         {{if ne .CHECKPOINT ""}}--checkpoint {{.CHECKPOINT}}{{end}}
+
+  eval:metrics:
+    desc: "Run only the compute-metrics stage"
+    vars:
+      SPLIT: val
+      ENABLE_SINGMOS: true
+    cmds:
+      - >
+        uv run python -m eval.cli
+        --stage compute-metrics
+        --split {{.SPLIT}}
+        {{if eq .ENABLE_SINGMOS "true"}}--enable-singmos{{end}}
+
+  eval:report:
+    desc: "Run only the build-report stage"
+    vars:
+      SPLIT: val
+    cmds:
+      - >
+        uv run python -m eval.cli
+        --stage build-report
+        --split {{.SPLIT}}
+
+  eval:comparison:
+    desc: "Build the standalone comparison report bundle"
+    cmds:
+      - uv run python scripts/build_combined_eval_report.py

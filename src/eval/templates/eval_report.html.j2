@@ -7,148 +7,224 @@
   <style>
     :root {
       --bg: #f6f3ef;
-      --panel: #fffdf8;
-      --ink: #1f2a37;
+      --panel: rgba(255, 253, 248, 0.96);
+      --ink: #1f2937;
       --muted: #6b7280;
+      --line: #ddd6cb;
       --accent: #0f766e;
-      --line: #d6d3d1;
+      --accent-soft: #d8f3ef;
+      --warn: #b45309;
       --bad: #b91c1c;
+      --good: #166534;
+      --shadow: 0 12px 28px rgba(17, 24, 39, 0.08);
     }
+    * { box-sizing: border-box; }
     body {
       margin: 0;
       font-family: "Source Sans 3", "Segoe UI", sans-serif;
       color: var(--ink);
-      background: radial-gradient(circle at top, #efe8dc 0%, var(--bg) 40%, #f7f4ef 100%);
+      background:
+        radial-gradient(circle at top left, rgba(15, 118, 110, 0.10), transparent 26%),
+        linear-gradient(180deg, #faf7f2 0%, var(--bg) 100%);
     }
     .wrap {
-      max-width: 1280px;
+      max-width: 1440px;
       margin: 0 auto;
       padding: 24px;
     }
-    .hero {
-      background: linear-gradient(120deg, #fef3c7, #ecfeff);
+    .hero, .panel {
+      background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 18px;
-      margin-bottom: 16px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
     }
-    .hero h1 {
+    .hero {
+      padding: 24px;
+      margin-bottom: 16px;
+      background: linear-gradient(135deg, rgba(255, 247, 214, 0.92), rgba(216, 243, 239, 0.96));
+    }
+    h1 {
       margin: 0 0 8px;
-      font-size: 28px;
-      letter-spacing: 0.02em;
+      font-size: 34px;
     }
     .meta {
-      color: var(--muted);
-      font-size: 14px;
       display: flex;
       flex-wrap: wrap;
-      gap: 14px;
+      gap: 10px 16px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .guidance {
+      margin-top: 16px;
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px solid rgba(15, 118, 110, 0.16);
+    }
+    .guidance h2 {
+      margin: 0 0 10px;
+      font-size: 18px;
+    }
+    .guidance ul {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--ink);
     }
     .cards {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
       gap: 12px;
-      margin-bottom: 16px;
+      margin: 16px 0;
     }
-    .card {
+    .card, .metric-summary {
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 12px;
+      border-radius: 16px;
+      padding: 14px;
+      box-shadow: var(--shadow);
     }
-    .card .label {
+    .card .label, .metric-summary .eyebrow {
       color: var(--muted);
-      font-size: 13px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
-    .card .value {
-      font-size: 24px;
+    .card .value, .metric-summary .value {
+      font-size: 28px;
       font-weight: 700;
       margin-top: 4px;
     }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .metric-summary.active {
+      border-color: rgba(15, 118, 110, 0.45);
+      background: linear-gradient(180deg, rgba(216, 243, 239, 0.75), rgba(255, 255, 255, 0.92));
+    }
+    .metric-summary .meta-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
     .controls {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 12px;
       display: flex;
       flex-wrap: wrap;
       gap: 14px;
       align-items: end;
-      margin-bottom: 12px;
+      padding: 16px;
+      margin-bottom: 14px;
     }
     .controls label {
       display: flex;
       flex-direction: column;
-      font-size: 13px;
-      color: var(--muted);
       gap: 4px;
+      color: var(--muted);
+      font-size: 13px;
     }
-    select, input {
-      padding: 8px 10px;
-      border-radius: 8px;
+    select, input, button {
       border: 1px solid var(--line);
-      font-size: 14px;
-      min-width: 120px;
+      border-radius: 10px;
+      padding: 9px 11px;
+      font: inherit;
+      background: white;
+      color: var(--ink);
+    }
+    button {
+      cursor: pointer;
+      background: var(--accent-soft);
+      color: #0b5c55;
+      font-weight: 700;
+    }
+    .table-wrap {
+      overflow-x: auto;
     }
     table {
       width: 100%;
       border-collapse: collapse;
+      min-width: 1180px;
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 12px;
+      border-radius: 18px;
       overflow: hidden;
+      box-shadow: var(--shadow);
     }
     thead {
-      background: #f3f4f6;
+      background: #f2ede5;
     }
     th, td {
-      padding: 10px;
-      border-bottom: 1px solid #ebe7df;
+      padding: 12px;
+      border-bottom: 1px solid #ece4d8;
       text-align: left;
       vertical-align: top;
       font-size: 14px;
     }
     th {
       font-size: 12px;
-      letter-spacing: 0.04em;
       text-transform: uppercase;
-      color: #374151;
+      letter-spacing: 0.05em;
+      color: #475467;
     }
-    tr.hidden {
-      display: none;
+    .metric-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      background: var(--accent-soft);
+      color: #0b5c55;
+      margin: 0 8px 8px 0;
     }
-    .metric {
+    .metric-pill.na {
+      background: #f3f4f6;
+      color: var(--muted);
+    }
+    .metric-pill.warn {
+      background: #fff7ed;
+      color: var(--warn);
+    }
+    .metric-pill.bad {
+      background: #fee2e2;
+      color: var(--bad);
+    }
+    .selected-metric {
+      min-width: 210px;
+    }
+    .selected-metric .value {
+      font-size: 24px;
       font-weight: 700;
       color: var(--accent);
     }
-    .metric.na {
-      color: var(--muted);
-      font-weight: 600;
+    .selected-metric .value.low-good {
+      color: #7c3aed;
     }
     .status {
-      font-size: 12px;
       color: var(--muted);
-      margin-top: 4px;
+      font-size: 12px;
+      line-height: 1.5;
+      margin-top: 6px;
     }
-    .status.error {
-      color: var(--bad);
+    .status.error { color: var(--bad); }
+    .file-label {
+      font-weight: 700;
+      margin-bottom: 6px;
     }
     audio {
-      width: 180px;
+      width: 190px;
       max-width: 100%;
       display: block;
     }
     @media (max-width: 900px) {
-      .wrap {
-        padding: 12px;
-      }
-      th, td {
-        padding: 8px;
-      }
-      audio {
-        width: 140px;
-      }
+      .wrap { padding: 12px; }
+      h1 { font-size: 28px; }
+      audio { width: 150px; }
     }
   </style>
 </head>
@@ -158,146 +234,240 @@
       <h1>Seed-VC Evaluation Report</h1>
       <div class="meta">
         <span>Generated: {{ generated_at }}</span>
-        <span>Metric: {{ metric_name }}</span>
+        <span>Total rows: {{ total_rows }}</span>
+        <span>Rows with issues: {{ failed_rows }}</span>
+      </div>
+      <div class="guidance">
+        <h2>Listening Checklist</h2>
+        <ul>
+          {% for item in listening_guidance %}
+          <li>{{ item }}</li>
+          {% endfor %}
+        </ul>
       </div>
     </section>
 
     <section class="cards">
       <article class="card">
-        <div class="label">Mean {{ metric_name }}</div>
-        <div class="value">{{ "%.4f"|format(mean_metric) if mean_metric is not none else "N/A" }}</div>
+        <div class="label">Default metric</div>
+        <div class="value" id="defaultMetricLabel"></div>
       </article>
       <article class="card">
         <div class="label">Total rows</div>
         <div class="value">{{ total_rows }}</div>
       </article>
       <article class="card">
-        <div class="label">Rows with metric</div>
+        <div class="label">Rows with default metric</div>
         <div class="value">{{ scored_rows }}</div>
       </article>
       <article class="card">
-        <div class="label">Rows with issues</div>
-        <div class="value">{{ failed_rows }}</div>
+        <div class="label">Visible rows</div>
+        <div class="value" id="visibleCountNumber">0</div>
       </article>
     </section>
 
-    <section class="controls">
+    <section class="metric-grid">
+      {% for metric in metrics %}
+      <article class="metric-summary" data-metric-card="{{ metric.key }}">
+        <div class="eyebrow">{{ metric.category }}</div>
+        <div class="value">{{ metric.mean_display }}</div>
+        <div><strong>{{ metric.label }}</strong></div>
+        <div class="status">{{ metric.description }}</div>
+        <div class="meta-row">
+          <span>Scored: {{ metric.scored }}</span>
+          <span>{{ metric.direction }} is better</span>
+        </div>
+      </article>
+      {% endfor %}
+    </section>
+
+    <section class="panel controls">
       <label>
-        Sort by metric
+        Metric focus
+        <select id="metricSelect"></select>
+      </label>
+      <label>
+        Sort rows
         <select id="sortOrder">
-          <option value="desc">High to low</option>
-          <option value="asc">Low to high</option>
-          <option value="none">Original order</option>
+          <option value="best">Best first</option>
+          <option value="worst">Worst first</option>
+          <option value="original">Original order</option>
         </select>
       </label>
       <label>
-        Min metric
-        <input id="minMetric" type="number" step="0.0001" placeholder="e.g. 0.7000">
+        Status filter
+        <select id="statusFilter">
+          <option value="all">All rows</option>
+          <option value="ok">Only scored</option>
+          <option value="issues">Only issues</option>
+          <option value="available">Scored + unavailable</option>
+        </select>
       </label>
       <label>
-        Max metric
-        <input id="maxMetric" type="number" step="0.0001" placeholder="e.g. 0.9500">
+        Min value
+        <input id="minMetric" type="number" step="0.0001" placeholder="Optional">
+      </label>
+      <label>
+        Max value
+        <input id="maxMetric" type="number" step="0.0001" placeholder="Optional">
       </label>
       <button id="clearFilters" type="button">Reset</button>
-      <span id="visibleCount" class="status"></span>
+      <span id="visibleCountText" class="status"></span>
     </section>
 
-    <table>
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Metric</th>
-          <th>Source</th>
-          <th>Target</th>
-          <th>Generated</th>
-        </tr>
-      </thead>
-      <tbody id="rows">
-      {% for row in rows %}
-        <tr data-order="{{ loop.index0 }}" data-metric="{{ row.metric_value if row.metric_value is not none else '' }}">
-          <td>{{ loop.index }}</td>
-          <td>
-            <div class="metric{% if row.metric_value is none %} na{% endif %}">{{ row.metric_display }}</div>
-            <div class="status{% if row.error %} error{% endif %}">
-              generation={{ row.generation_status }}, metric={{ row.metric_status }}
-              {% if row.error %}<br>{{ row.error }}{% endif %}
-            </div>
-          </td>
-          <td>
-            <audio controls preload="none" src="{{ row.source_path }}"></audio>
-          </td>
-          <td>
-            <audio controls preload="none" src="{{ row.target_path }}"></audio>
-          </td>
-          <td>
-            <audio controls preload="none" src="{{ row.generated_path }}"></audio>
-          </td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
+    <section class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Selected metric</th>
+            <th>All metrics</th>
+            <th>Source</th>
+            <th>Target</th>
+            <th>Generated</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </section>
   </div>
 
   <script>
-    const tbody = document.getElementById('rows');
+    const defaultMetricKey = {{ default_metric_key|tojson }};
+    const metrics = {{ metrics|tojson }};
+    const rows = {{ rows|tojson }};
+    const metricSelect = document.getElementById('metricSelect');
     const sortOrder = document.getElementById('sortOrder');
+    const statusFilter = document.getElementById('statusFilter');
     const minMetric = document.getElementById('minMetric');
     const maxMetric = document.getElementById('maxMetric');
     const clearFilters = document.getElementById('clearFilters');
-    const visibleCount = document.getElementById('visibleCount');
-    const allRows = Array.from(tbody.querySelectorAll('tr'));
+    const tbody = document.getElementById('rows');
+    const visibleCountText = document.getElementById('visibleCountText');
+    const visibleCountNumber = document.getElementById('visibleCountNumber');
+    const defaultMetricLabel = document.getElementById('defaultMetricLabel');
 
-    function parseMetric(row) {
-      const raw = row.dataset.metric;
-      if (raw === '') return null;
-      const parsed = Number(raw);
-      return Number.isFinite(parsed) ? parsed : null;
+    defaultMetricLabel.textContent = (metrics.find((metric) => metric.key === defaultMetricKey) || {}).label || defaultMetricKey;
+
+    for (const metric of metrics) {
+      const option = document.createElement('option');
+      option.value = metric.key;
+      option.textContent = `${metric.label} (${metric.direction} is better)`;
+      if (metric.key === defaultMetricKey) option.selected = true;
+      metricSelect.appendChild(option);
     }
 
-    function renderRows(rows) {
-      tbody.innerHTML = '';
-      rows.forEach((row) => tbody.appendChild(row));
+    function metricMeta(key) {
+      return metrics.find((metric) => metric.key === key) || { key, label: key, direction: 'higher' };
     }
 
-    function applyControls() {
-      const minVal = minMetric.value === '' ? null : Number(minMetric.value);
-      const maxVal = maxMetric.value === '' ? null : Number(maxMetric.value);
-      const filtered = allRows.filter((row) => {
-        const score = parseMetric(row);
-        if (score === null) return false;
-        if (minVal !== null && score < minVal) return false;
-        if (maxVal !== null && score > maxVal) return false;
-        return true;
-      });
+    function metricCell(row, key) {
+      return row.metrics[key] || { display: 'N/A', status: 'not_run', error: null, direction: metricMeta(key).direction, value: null, sort_value: null };
+    }
 
-      if (sortOrder.value !== 'none') {
-        filtered.sort((a, b) => {
-          const av = parseMetric(a);
-          const bv = parseMetric(b);
-          if (av === null && bv === null) return 0;
-          if (av === null) return 1;
-          if (bv === null) return -1;
-          return sortOrder.value === 'asc' ? av - bv : bv - av;
-        });
-      } else {
-        filtered.sort((a, b) => Number(a.dataset.order) - Number(b.dataset.order));
+    function metricPillClass(cell) {
+      if (cell.status === 'ok') return 'metric-pill';
+      if (cell.status === 'disabled' || cell.status === 'unavailable' || cell.status === 'not_run') return 'metric-pill na';
+      if (cell.status === 'missing_generated') return 'metric-pill warn';
+      return 'metric-pill bad';
+    }
+
+    function matchesStatus(cell) {
+      if (statusFilter.value === 'all') return true;
+      if (statusFilter.value === 'ok') return cell.status === 'ok';
+      if (statusFilter.value === 'issues') return cell.status !== 'ok';
+      if (statusFilter.value === 'available') return cell.status === 'ok' || cell.status === 'unavailable';
+      return true;
+    }
+
+    function withinBounds(cell) {
+      const minValue = minMetric.value === '' ? null : Number(minMetric.value);
+      const maxValue = maxMetric.value === '' ? null : Number(maxMetric.value);
+      if (cell.value === null) return minValue === null && maxValue === null;
+      if (minValue !== null && cell.value < minValue) return false;
+      if (maxValue !== null && cell.value > maxValue) return false;
+      return true;
+    }
+
+    function renderRows() {
+      const selectedMetric = metricSelect.value;
+      const selectedMeta = metricMeta(selectedMetric);
+      for (const card of document.querySelectorAll('[data-metric-card]')) {
+        card.classList.toggle('active', card.dataset.metricCard === selectedMetric);
       }
 
-      renderRows(filtered);
-      visibleCount.textContent = `Showing ${filtered.length} / ${allRows.length} rows with valid metrics`;
+      const filtered = rows.filter((row) => {
+        const cell = metricCell(row, selectedMetric);
+        return matchesStatus(cell) && withinBounds(cell);
+      });
+
+      if (sortOrder.value !== 'original') {
+        filtered.sort((a, b) => {
+          const aCell = metricCell(a, selectedMetric);
+          const bCell = metricCell(b, selectedMetric);
+          if (aCell.sort_value === null && bCell.sort_value === null) return 0;
+          if (aCell.sort_value === null) return 1;
+          if (bCell.sort_value === null) return -1;
+          return sortOrder.value === 'best'
+            ? bCell.sort_value - aCell.sort_value
+            : aCell.sort_value - bCell.sort_value;
+        });
+      }
+
+      tbody.innerHTML = '';
+      filtered.forEach((row, index) => {
+        const selectedCell = metricCell(row, selectedMetric);
+        const metricStrip = metrics.map((metric) => {
+          const cell = metricCell(row, metric.key);
+          return `<span class="${metricPillClass(cell)}">${metric.short_label}: ${cell.display}</span>`;
+        }).join('');
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${index + 1}</td>
+          <td class="selected-metric">
+            <div class="file-label">${selectedMeta.label}</div>
+            <div class="value ${selectedMeta.direction === 'lower' ? 'low-good' : ''}">${selectedCell.display}</div>
+            <div class="status ${selectedCell.error ? 'error' : ''}">
+              generation=${row.generation_status}, metric=${selectedCell.status}${selectedCell.error ? `<br>${selectedCell.error}` : ''}
+            </div>
+          </td>
+          <td>${metricStrip}</td>
+          <td>
+            <div class="file-label">Source</div>
+            <audio controls preload="none" src="${row.source_path}"></audio>
+          </td>
+          <td>
+            <div class="file-label">Target</div>
+            <audio controls preload="none" src="${row.target_path}"></audio>
+          </td>
+          <td>
+            <div class="file-label">Generated</div>
+            <audio controls preload="none" src="${row.generated_path}"></audio>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      visibleCountText.textContent = `Showing ${filtered.length} / ${rows.length} rows for ${selectedMeta.label}`;
+      visibleCountNumber.textContent = String(filtered.length);
     }
 
-    sortOrder.addEventListener('change', applyControls);
-    minMetric.addEventListener('input', applyControls);
-    maxMetric.addEventListener('input', applyControls);
+    metricSelect.addEventListener('change', renderRows);
+    sortOrder.addEventListener('change', renderRows);
+    statusFilter.addEventListener('change', renderRows);
+    minMetric.addEventListener('input', renderRows);
+    maxMetric.addEventListener('input', renderRows);
     clearFilters.addEventListener('click', () => {
-      sortOrder.value = 'desc';
+      metricSelect.value = defaultMetricKey;
+      sortOrder.value = 'best';
+      statusFilter.value = 'all';
       minMetric.value = '';
       maxMetric.value = '';
-      applyControls();
+      renderRows();
     });
 
-    applyControls();
+    renderRows();
   </script>
 </body>
 </html>
