@@ -1,5 +1,7 @@
 # Seed VC
 
+[![GitHub Pages](https://img.shields.io/badge/GitHub%20Pages-Eval%20Report-blue?logo=github)](https://maksymhalychshi2022.github.io/polyphony-seed-vc-evaluation/)
+
 ## Start demo app
 
 ```bash
