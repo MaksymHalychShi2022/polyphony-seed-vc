@@ -2,8 +2,12 @@ schema: '2.0'
 stages:
   process-raw:
     cmd:
-    - uv run --env-file .env python scripts/process_raw_dataset.py --max-songs 
-      10
+    - "uv run --env-file .env python scripts/process_raw_dataset.py --sr 44100 --chunk-seconds
+      8.0 --min-chunk-seconds 1.0 --max-chunk-seconds 30.0 --target-lufs -14.0 --peak
+      0.99 --silence-threshold-db -30.0 --max-silence-ratio 0.05 --max-songs 100 --quality-threshold
+      -1.0 --singmos-chunk-seconds 5 --vad-threshold 0.5 --min-vad-region-seconds
+      0.5 --vad-merge-gap-seconds 0.2 --vad-pad-seconds 0.1 --min-source-activity-ratio
+      0.2 --min-polyphony-ratio 0.15 --subtype PCM_24\n"
     - uv run --env-file .env python scripts/build_train_val_csv.py
     deps:
     - path: data/raw/tracks
@@ -15,30 +19,52 @@ stages:
       hash: md5
       md5: 014c9d1ceff2922b86c474a98e5440d2
       size: 3654
+    - path: scripts/preprocess_audio_utils.py
+      hash: md5
+      md5: 4d797af0142344a7c5659dd84c392904
+      size: 6434
     - path: scripts/process_raw_dataset.py
       hash: md5
-      md5: 7bbf29c3881dfeca4f3f9d8d70c4fbf8
-      size: 8409
+      md5: 060bab259b3bbe4ec9fbc4298fa750d3
+      size: 22791
     params:
       params.yaml:
-        process_raw.max_songs: 10
+        process_raw:
+          sr: 44100
+          chunk_seconds: 8.0
+          min_chunk_seconds: 1.0
+          max_chunk_seconds: 30.0
+          target_lufs: -14.0
+          peak: 0.99
+          silence_threshold_db: -30.0
+          max_silence_ratio: 0.05
+          max_songs: 100
+          quality_threshold: -1.0
+          singmos_chunk_seconds: 5
+          vad_threshold: 0.5
+          min_vad_region_seconds: 0.5
+          vad_merge_gap_seconds: 0.2
+          vad_pad_seconds: 0.1
+          min_source_activity_ratio: 0.2
+          min_polyphony_ratio: 0.15
+          subtype: PCM_24
     outs:
     - path: data/processed
       hash: md5
-      md5: 5cb923521189c1056499fba7de0dd304.dir
-      size: 162003267
-      nfiles: 272
+      md5: 436d296afd28409040654e9d7d7552dd.dir
+      size: 328621845
+      nfiles: 577
   extract-mel:
     cmd: uv run --env-file .env python scripts/precompute_mel_features.py
     deps:
     - path: data/processed/train.csv
       hash: md5
-      md5: e1bac416f8135bfbae818f9997ecaa82
-      size: 19390
+      md5: 7ee9df01801f5ba6505eeded819bd13e
+      size: 32523
     - path: data/processed/val.csv
       hash: md5
-      md5: a0fc39d65fc5743913715670196b5f2b
-      size: 2130
+      md5: 3df14b619c19c73bd3b7fb3620a5a57e
+      size: 3585
     - path: scripts/precompute_mel_features.py
       hash: md5
       md5: 73d915b48d76e201bea996ab3e2d1ea0
@@ -46,20 +72,20 @@ stages:
     outs:
     - path: data/features/mel
       hash: md5
-      md5: 00e01619269c61a72f99627c57a70d16.dir
-      size: 95778267
-      nfiles: 270
+      md5: a7313d654046eb41d0888e0979705b68.dir
+      size: 189813157
+      nfiles: 474
   extract-semantic:
     cmd: uv run --env-file .env python scripts/precompute_semantic_features.py
     deps:
     - path: data/processed/train.csv
       hash: md5
-      md5: e1bac416f8135bfbae818f9997ecaa82
-      size: 19390
+      md5: 7ee9df01801f5ba6505eeded819bd13e
+      size: 32523
     - path: data/processed/val.csv
       hash: md5
-      md5: a0fc39d65fc5743913715670196b5f2b
-      size: 2130
+      md5: 3df14b619c19c73bd3b7fb3620a5a57e
+      size: 3585
     - path: scripts/precompute_semantic_features.py
       hash: md5
       md5: 981732c1e39cc3ed593ce6882285de03
@@ -67,20 +93,20 @@ stages:
     outs:
     - path: data/features/semantic
       hash: md5
-      md5: c667105f11513abba1662881fec796c0.dir
-      size: 1244690907
-      nfiles: 270
+      md5: b58bc97c4dd96ab0f7629e711667ded7.dir
+      size: 2185120165
+      nfiles: 474
   extract-f0:
     cmd: uv run --env-file .env python scripts/precompute_f0_features.py
     deps:
     - path: data/processed/train.csv
       hash: md5
-      md5: e1bac416f8135bfbae818f9997ecaa82
-      size: 19390
+      md5: 7ee9df01801f5ba6505eeded819bd13e
+      size: 32523
     - path: data/processed/val.csv
       hash: md5
-      md5: a0fc39d65fc5743913715670196b5f2b
-      size: 2130
+      md5: 3df14b619c19c73bd3b7fb3620a5a57e
+      size: 3585
     - path: scripts/precompute_f0_features.py
       hash: md5
       md5: ea6b7e1c75501684eaecc9b5993ffa3e
@@ -88,20 +114,20 @@ stages:
     outs:
     - path: data/features/f0
       hash: md5
-      md5: 3caf5d7c6a8d9d11eee1bba27337392a.dir
-      size: 1391899
-      nfiles: 270
+      md5: 8e4e0c0e405a1c7beeaa20dbeed6d456.dir
+      size: 2637157
+      nfiles: 474
   extract-embedding:
     cmd: uv run --env-file .env python scripts/precompute_embedding_features.py
     deps:
     - path: data/processed/train.csv
       hash: md5
-      md5: e1bac416f8135bfbae818f9997ecaa82
-      size: 19390
+      md5: 7ee9df01801f5ba6505eeded819bd13e
+      size: 32523
     - path: data/processed/val.csv
       hash: md5
-      md5: a0fc39d65fc5743913715670196b5f2b
-      size: 2130
+      md5: 3df14b619c19c73bd3b7fb3620a5a57e
+      size: 3585
     - path: scripts/precompute_embedding_features.py
       hash: md5
       md5: 2235042ec2d9250a903304ea281dbbca
@@ -109,6 +135,6 @@ stages:
     outs:
     - path: data/features/embedding
       hash: md5
-      md5: 1c896a64599ffa4eb6c6765fe5bbdf29.dir
-      size: 114163
-      nfiles: 47
+      md5: f38437d361b6b6b9f4039b0a6c43b335.dir
+      size: 235613
+      nfiles: 97

@@ -1,7 +1,4 @@
 [core]
-    analytics = false
     remote = gdrive
-[cache]
-    type = hardlink
 ['remote "gdrive"']
     url = gdrive://1xjXMHqo4mq21QohO18wDhHDc0Eg6UbFY

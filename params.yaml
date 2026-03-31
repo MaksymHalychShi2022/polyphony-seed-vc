@@ -7,7 +7,7 @@ process_raw:
   peak: 0.99
   silence_threshold_db: -30.0
   max_silence_ratio: 0.05
-  max_songs: 10
+  max_songs: 100
   quality_threshold: -1.0
   singmos_chunk_seconds: 5
   vad_threshold: 0.5
