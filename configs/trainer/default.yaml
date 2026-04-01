@@ -1,0 +1,8 @@
+max_steps: 1000
+max_epochs: 1000
+batch_size: 2
+num_workers: 0
+require_features: true
+save_every: 100
+eval_every: 1
+log_interval: 10

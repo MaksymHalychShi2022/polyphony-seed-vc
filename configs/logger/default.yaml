@@ -1,0 +1,3 @@
+tensorboard:
+  _target_: seed_vc.train.loggers.TensorBoardLogger
+  save_dir: "${paths.output_dir}"

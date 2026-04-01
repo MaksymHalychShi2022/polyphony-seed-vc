@@ -1,0 +1,15 @@
+lr: 1e-4
+betas: [0.9, 0.98]
+eps: 1.0e-6
+weight_decay: 0.01
+
+scheduler:
+  gamma: 0.999996
+  min_lr: 1.0e-5
+
+loss:
+  commitment_weight: 0.05
+  codebook_weight: 0.15
+  grad_clip_norm: 10.0
+  prompt_zero_prob: 0.1
+  ema_alpha: 0.99

@@ -5,13 +5,13 @@ from pathlib import Path
 from typing import Any, Sequence
 
 import hydra
-import mlflow
 import torch
+from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
-from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
 from seed_vc.train.features_dataset import build_features_dataloader
+from seed_vc.train.loggers import MultiLogger
 from seed_vc.train.optimizers import build_optimizer
 from seed_vc.train.seed_vc_model import SeedVCModel
 from seed_vc.utils.hf_utils import load_custom_model_from_hf
@@ -28,6 +28,7 @@ class Trainer:
         self,
         model: SeedVCModel,
         config: dict,
+        logger: MultiLogger,
         log_dir: str,
         batch_size: int = 0,
         num_workers: int = 0,
@@ -40,7 +41,7 @@ class Trainer:
     ) -> None:
         self.device = device
         self.log_dir = log_dir
-        self._setup_loggers(config)
+        self.logger = logger
         batch_size = config.get("batch_size", 10) if batch_size == 0 else batch_size
         self.max_steps = steps
 
@@ -92,35 +93,25 @@ class Trainer:
         )
 
         self.model = model.to(device)
-        self.model.setup_caches(max_batch_size=batch_size, max_seq_length=8192)
-        self.optimizer = build_optimizer(self.model.components(), lr=0.00001)
-        self.epoch, self.iters = 0, 0
-
-    def _setup_loggers(self, config: dict) -> None:
-        self._tb = (
-            SummaryWriter(self.log_dir)
-            if config.get("tensorboard_logging", True)
-            else None
+        max_seq_length = config["model_params"]["DiT"]["block_size"]
+        self.model.setup_caches(
+            max_batch_size=batch_size, max_seq_length=max_seq_length
         )
-        self._mlflow = False
-        if config.get("mlflow_logging", False):
-            uri = os.getenv("MLFLOW_TRACKING_URI")
-            if uri:
-                mlflow.set_tracking_uri(uri)
-                mlflow.set_experiment(config["run_name"])
-                mlflow.start_run(run_name=config["run_name"])
-                self._mlflow = True
-            else:
-                log.warning(
-                    "mlflow_logging=true but MLFLOW_TRACKING_URI is not set, skipping."
-                )
 
-    def log_metric(self, name: str, value: float, step: int) -> None:
-        if self._tb is not None:
-            self._tb.add_scalar(name, value, step)
-            self._tb.flush()
-        if self._mlflow:
-            mlflow.log_metric(name, float(value), step=step)
+        optimizer_cfg = config["optimizer"]
+        self.optimizer = build_optimizer(
+            self.model.components(),
+            optimizer_cfg=optimizer_cfg,
+            scheduler_cfg=optimizer_cfg["scheduler"],
+        )
+        loss_cfg = optimizer_cfg["loss"]
+        self.commitment_weight = loss_cfg["commitment_weight"]
+        self.codebook_weight = loss_cfg["codebook_weight"]
+        self.grad_clip_norm = loss_cfg["grad_clip_norm"]
+        self.prompt_zero_prob = loss_cfg["prompt_zero_prob"]
+        self.loss_smoothing_rate = loss_cfg["ema_alpha"]
+
+        self.epoch, self.iters = 0, 0
 
     def train_one_step(self, batch: Sequence[Any], update: bool = True) -> float:
         (
@@ -168,7 +159,7 @@ class Trainer:
         prompt_len = (
             (torch.rand([B], device=alt_cond.device) * prompt_len_max).floor().long()
         )
-        prompt_len[torch.rand([B], device=alt_cond.device) < 0.1] = 0
+        prompt_len[torch.rand([B], device=alt_cond.device) < self.prompt_zero_prob] = 0
 
         cond = alt_cond.clone()
         for bib in range(B):
@@ -184,16 +175,18 @@ class Trainer:
         )
         loss_total = (
             loss
-            + (alt_commitment_loss + ori_commitment_loss) * 0.05
-            + (ori_codebook_loss + alt_codebook_loss) * 0.15
+            + (alt_commitment_loss + ori_commitment_loss) * self.commitment_weight
+            + (ori_codebook_loss + alt_codebook_loss) * self.codebook_weight
         )
 
         if update:
             self.optimizer.zero_grad()
             loss_total.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.cfm.parameters(), 10.0)
             torch.nn.utils.clip_grad_norm_(
-                self.model.length_regulator.parameters(), 10.0
+                self.model.cfm.parameters(), self.grad_clip_norm
+            )
+            torch.nn.utils.clip_grad_norm_(
+                self.model.length_regulator.parameters(), self.grad_clip_norm
             )
             self.optimizer.step("cfm")
             self.optimizer.step("length_regulator")
@@ -217,7 +210,7 @@ class Trainer:
                 else loss
             )
             if self.iters % self.log_interval == 0:
-                self.log_metric("train/loss", self.ema_loss, self.iters)
+                self.logger.log_metric("train/loss", self.ema_loss, self.iters)
             self.iters += 1
 
             if self.iters >= self.max_steps:
@@ -248,13 +241,12 @@ class Trainer:
                 n_batches += 1
         avg_loss = (total_loss / n_batches) if n_batches > 0 else None
         if avg_loss is not None:
-            self.log_metric("eval/loss", avg_loss, self.iters)
+            self.logger.log_metric("eval/loss", avg_loss, self.iters)
         self.model.train()
         return avg_loss
 
     def train(self) -> None:
         self.ema_loss = 0.0
-        self.loss_smoothing_rate = 0.99
         for epoch in range(self.n_epochs):
             self.epoch = epoch
             self.train_one_epoch()
@@ -271,10 +263,7 @@ class Trainer:
         self.model.save_weights(save_path)
         log.info(f"Final model saved at {save_path}")
 
-        if self._tb is not None:
-            self._tb.close()
-        if self._mlflow:
-            mlflow.end_run()
+        self.logger.finalize()
 
     def save_state(self, path: str) -> None:
         torch.save(
@@ -302,12 +291,17 @@ class Trainer:
         self.epoch = int(state.get("epoch", 0))
 
 
-@hydra.main(config_path=_CONFIGS_DIR, config_name="config", version_base="1.3")
+@hydra.main(config_path=_CONFIGS_DIR, config_name="train", version_base="1.3")
 def main(cfg: DictConfig) -> None:
     from hydra.core.hydra_config import HydraConfig
 
     config: dict = OmegaConf.to_container(cfg, resolve=True)
-    log_dir = HydraConfig.get().runtime.output_dir
+    hydra_cfg = HydraConfig.get()
+    log_dir = hydra_cfg.runtime.output_dir
+
+    log.info(f"Config: {hydra_cfg.runtime.config_sources[0].path}/train.yaml")
+    log.info(f"Output dir: {log_dir}")
+    log.info("Resolved config:\n%s", OmegaConf.to_yaml(cfg))
 
     model = SeedVCModel(config["model_params"])
 
@@ -332,17 +326,24 @@ def main(cfg: DictConfig) -> None:
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    logger_backends = (
+        [instantiate(v) for v in cfg.logger.values()] if cfg.get("logger") else []
+    )
+    multi_logger = MultiLogger(logger_backends)
+
+    trainer_cfg = config["trainer"]
     trainer = Trainer(
         model=model,
         config=config,
+        logger=multi_logger,
         log_dir=log_dir,
-        batch_size=config.get("batch_size", 2),
-        steps=config.get("max_steps", 1000),
-        max_epochs=config.get("max_epochs", 1000),
-        save_interval=config.get("save_every", 100),
-        num_workers=config.get("num_workers", 0),
-        eval_interval=config.get("eval_every", 1),
-        require_features=config.get("require_features", True),
+        batch_size=trainer_cfg["batch_size"],
+        steps=trainer_cfg["max_steps"],
+        max_epochs=trainer_cfg["max_epochs"],
+        save_interval=trainer_cfg["save_every"],
+        num_workers=trainer_cfg["num_workers"],
+        eval_interval=trainer_cfg["eval_every"],
+        require_features=trainer_cfg["require_features"],
         device=device,
     )
     try:

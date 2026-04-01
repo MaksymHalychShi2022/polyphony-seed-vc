@@ -1,0 +1,8 @@
+tensorboard:
+  _target_: seed_vc.train.loggers.TensorBoardLogger
+  save_dir: "${paths.output_dir}"
+
+mlflow:
+  _target_: seed_vc.train.loggers.MLflowLogger
+  experiment_name: "${run_name}"
+  tracking_uri: "${oc.env:MLFLOW_TRACKING_URI,null}"

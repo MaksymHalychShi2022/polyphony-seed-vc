@@ -1,0 +1,4 @@
+output_dir: ${hydra:runtime.output_dir}
+data_dir: ${oc.env:DATA_PROCESSED,data/processed}
+cache_dir: ${oc.env:DATA_FEATURES,data/features}
+experiments_dir: ${oc.env:EXPERIMENTS_DIR,runs}

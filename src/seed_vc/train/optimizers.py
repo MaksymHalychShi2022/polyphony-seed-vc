@@ -1,6 +1,7 @@
 # coding:utf-8
-import torch
 from functools import reduce
+
+import torch
 from torch.optim import AdamW
 
 
@@ -59,42 +60,6 @@ class MultiOptimizer:
             _ = [self.schedulers[key].step_batch(*args) for key in self.keys]
 
 
-def define_scheduler(optimizer, params):
-    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=params["gamma"])
-
-    return scheduler
-
-
-def build_optimizer(model_dict, lr, type="AdamW"):
-    optim = {}
-    for key, model in model_dict.items():
-        model_parameters = model.parameters()
-        parameters_names = []
-        parameters_names.append(
-            [name_param_pair[0] for name_param_pair in model.named_parameters()]
-        )
-        if type == "AdamW":
-            optim[key] = AdamW(
-                model_parameters,
-                lr=lr,
-                betas=(0.9, 0.98),
-                eps=1e-6,
-                weight_decay=0.01,
-            )
-        else:
-            raise ValueError("Unknown optimizer type: %s" % type)
-
-    schedulers = dict(
-        [
-            (key, torch.optim.lr_scheduler.ExponentialLR(opt, gamma=0.999996))
-            for key, opt in optim.items()
-        ]
-    )
-
-    multi_optim = MultiOptimizer(optim, schedulers)
-    return multi_optim
-
-
 class MinLRExponentialLR(torch.optim.lr_scheduler.ExponentialLR):
     def __init__(self, optimizer, gamma, min_lr=1e-5):
         self.min_lr = min_lr
@@ -105,20 +70,24 @@ class MinLRExponentialLR(torch.optim.lr_scheduler.ExponentialLR):
         return [max(lr, self.min_lr) for lr in lrs]
 
 
-def build_single_optimizer(
-    model,
-    lr,
-):
-    model_parameters = model.parameters()
-    parameters_require_grad = filter(lambda p: p.requires_grad, model_parameters)
-    optim = AdamW(
-        parameters_require_grad,
-        lr=lr,
-        betas=(0.9, 0.98),
-        eps=1e-6,
-        weight_decay=0.01,
-    )
+def build_optimizer(
+    model_dict: dict, optimizer_cfg: dict, scheduler_cfg: dict
+) -> MultiOptimizer:
+    optim = {}
+    for key, model in model_dict.items():
+        optim[key] = AdamW(
+            model.parameters(),
+            lr=optimizer_cfg["lr"],
+            betas=tuple(optimizer_cfg["betas"]),
+            eps=optimizer_cfg["eps"],
+            weight_decay=optimizer_cfg["weight_decay"],
+        )
 
-    scheduler = MinLRExponentialLR(optim, gamma=0.999996, min_lr=1e-5)
+    schedulers = {
+        key: MinLRExponentialLR(
+            opt, gamma=scheduler_cfg["gamma"], min_lr=scheduler_cfg["min_lr"]
+        )
+        for key, opt in optim.items()
+    }
 
-    return optim, scheduler
+    return MultiOptimizer(optim, schedulers)
