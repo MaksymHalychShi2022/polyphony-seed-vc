@@ -266,7 +266,10 @@ class Trainer:
         )
         log.info("Saving final model")
         os.makedirs(self.log_dir, exist_ok=True)
-        save_path = os.path.join(self.log_dir, "ft_model.pth")
+        save_path = os.path.join(
+            self.log_dir,
+            f"DiT_epoch_{self.epoch:05d}_step_{self.iters:05d}.pth",
+        )
         self.model.save_weights(save_path)
         log.info(f"Final model saved at {save_path}")
 
