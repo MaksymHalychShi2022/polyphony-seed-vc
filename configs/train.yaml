@@ -5,7 +5,7 @@ defaults:
   - model: default
   - trainer: default
   - optimizer: default
-  - logger: default
+  - logger: mlflow
   - paths: default
   - hparams_search: null
   - experiment: null
