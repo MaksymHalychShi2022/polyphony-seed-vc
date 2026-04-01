@@ -247,16 +247,23 @@ class Trainer:
 
     def train(self) -> None:
         self.ema_loss = 0.0
-        for epoch in range(self.n_epochs):
-            self.epoch = epoch
-            self.train_one_epoch()
-            if (epoch + 1) % self.eval_interval == 0 and self.has_val:
-                eval_loss = self.evaluate()
-                if eval_loss is not None:
-                    log.info(f"Eval loss at epoch {epoch + 1}: {eval_loss:.4f}")
-            if self.iters >= self.max_steps:
-                break
+        try:
+            for epoch in range(self.n_epochs):
+                self.epoch = epoch
+                self.train_one_epoch()
+                if (epoch + 1) % self.eval_interval == 0 and self.has_val:
+                    eval_loss = self.evaluate()
+                    if eval_loss is not None:
+                        log.info(f"Eval loss at epoch {epoch + 1}: {eval_loss:.4f}")
+                if self.iters >= self.max_steps:
+                    break
+        except KeyboardInterrupt:
+            log.info("Interrupted — saving checkpoint before exit...")
 
+        log.info(
+            f"Stopped at epoch {self.epoch + 1}, step {self.iters} | "
+            f"EMA train loss: {self.ema_loss:.4f}"
+        )
         log.info("Saving final model")
         os.makedirs(self.log_dir, exist_ok=True)
         save_path = os.path.join(self.log_dir, "ft_model.pth")
