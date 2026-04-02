@@ -42,6 +42,13 @@ class MLflowLogger(BaseLogger):
 
         mlflow.log_metric(name, float(value), step=step)
 
+    def log_params(self, params: dict) -> None:
+        import mlflow
+
+        items = list(params.items())
+        for i in range(0, len(items), 100):
+            mlflow.log_params(dict(items[i : i + 100]))
+
     def finalize(self) -> None:
         import mlflow
 
@@ -51,6 +58,11 @@ class MLflowLogger(BaseLogger):
 class MultiLogger:
     def __init__(self, loggers: list[BaseLogger]) -> None:
         self._loggers = loggers
+
+    def log_params(self, params: dict) -> None:
+        for lg in self._loggers:
+            if hasattr(lg, "log_params"):
+                lg.log_params(params)
 
     def log_metric(self, name: str, value: float, step: int) -> None:
         for lg in self._loggers:

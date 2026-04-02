@@ -1,4 +1,5 @@
 import glob
+import json
 import logging
 import os
 from pathlib import Path
@@ -19,6 +20,20 @@ from seed_vc.utils.hf_utils import load_custom_model_from_hf
 os.environ["HF_HUB_CACHE"] = "./checkpoints/hf_cache"
 
 log = logging.getLogger(__name__)
+
+
+def _flatten_dict(d: Any, prefix: str = "") -> dict[str, Any]:
+    out = {}
+    if isinstance(d, dict):
+        for k, v in d.items():
+            out.update(_flatten_dict(v, f"{prefix}{k}."))
+    elif isinstance(d, list):
+        for i, v in enumerate(d):
+            out.update(_flatten_dict(v, f"{prefix}{i}."))
+    else:
+        out[prefix.rstrip(".")] = d
+    return out
+
 
 _CONFIGS_DIR = str(Path(__file__).parent.parent.parent.parent / "configs")
 
@@ -276,6 +291,14 @@ class Trainer:
         log.info(f"Final model saved at {save_path}")
 
         self.logger.finalize()
+
+        metrics: dict[str, float] = {"train/loss": float(self.ema_loss)}
+        if last_eval_loss is not None:
+            metrics["val/loss"] = float(last_eval_loss)
+        with open("metrics.json", "w", encoding="utf-8") as f:
+            json.dump(metrics, f, indent=2)
+        log.info(f"Metrics written to metrics.json: {metrics}")
+
         return last_eval_loss
 
     def save_state(self, path: str) -> None:
@@ -343,6 +366,9 @@ def main(cfg: DictConfig) -> None:
         [instantiate(v) for v in cfg.logger.values()] if cfg.get("logger") else []
     )
     multi_logger = MultiLogger(logger_backends)
+    flat_cfg = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=False)
+    flat_params = _flatten_dict(flat_cfg)
+    multi_logger.log_params(flat_params)
 
     trainer_cfg = config["trainer"]
     trainer = Trainer(
