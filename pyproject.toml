@@ -41,3 +41,8 @@ build-backend = "hatchling.build"
 
 [tool.uv.sources]
 ten-vad = { git = "https://github.com/TEN-framework/ten-vad.git" }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

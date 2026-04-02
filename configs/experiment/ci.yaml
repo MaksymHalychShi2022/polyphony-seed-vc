@@ -1,0 +1,26 @@
+# @package _global_
+# CI experiment — fast 5-step CPU training for GitHub Actions
+#
+# Usage:
+#   DATA_PROCESSED=tests/fixtures DATA_FEATURES=tests/fixtures/features \
+#   uv run python -m seed_vc.train.train experiment=ci
+
+defaults:
+  - override /logger: null   # disable TensorBoard + MLflow
+
+run_name: "ci"
+
+pretrained_model: ""    # disable HuggingFace checkpoint download
+pretrained_ckpt: null
+
+trainer:
+  max_steps: 5
+  max_epochs: 1
+  batch_size: 1
+  save_every: 10
+  eval_every: 1
+  num_workers: 0
+
+hydra:
+  run:
+    dir: "runs/ci"
