@@ -64,6 +64,8 @@ CLAUDE.md
 # === Project Specific ===
 .cache/
 data/example
+metrics.json
+report.md
 
 data/dataset.csv
 checkpoints/
@@ -75,7 +77,6 @@ ignore/
 
 *mp3
 
-mlruns.db
-optuna_hpo.db
+*.db
 
 TODO

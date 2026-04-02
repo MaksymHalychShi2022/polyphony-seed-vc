@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install uv
+          uv sync --frozen
+
+      - name: Lint
+        run: |
+          uv run ruff check .
+
+      - name: Pre-train tests
+        env:
+          DATA_PROCESSED: tests/fixtures
+        run: |
+          uv run pytest tests/test_data.py -v
+
+      - name: Train (CI mode)
+        env:
+          DATA_PROCESSED: tests/fixtures
+          DATA_FEATURES: tests/fixtures/features
+        run: |
+          uv run python -m seed_vc.train.train experiment=ci
+
+      - name: Post-train tests (Quality Gate)
+        env:
+          TRAIN_LOSS_THRESHOLD: "10.0"
+        run: |
+          uv run pytest tests/test_artifacts.py -v
+
+      - name: Setup CML
+        if: github.event_name == 'pull_request'
+        uses: iterative/setup-cml@v3
+
+      - name: CML report
+        if: github.event_name == 'pull_request'
+        env:
+          REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "## Model Metrics" > report.md
+          echo "" >> report.md
+          echo '```json' >> report.md
+          cat metrics.json >> report.md
+          echo '```' >> report.md
+          echo "" >> report.md
+          echo "| Metric | Value |" >> report.md
+          echo "| --- | --- |" >> report.md
+          python -c "
+          import json
+          m = json.load(open('metrics.json'))
+          for k, v in m.items():
+              print(f'| {k} | {v:.4f} |')
+          " >> report.md
+          echo "" >> report.md
+          echo "**Quality Gate threshold:** \`TRAIN_LOSS_THRESHOLD=${TRAIN_LOSS_THRESHOLD}\`" >> report.md
+          cml comment create report.md
