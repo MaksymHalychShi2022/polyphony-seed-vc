@@ -118,6 +118,18 @@ tasks:
         --stage build-report
         --split {{.SPLIT}}
 
+  hpo:
+    desc: "Run Lab 3 HPO sweep with Optuna TPE sampler (experiment=hpo_lab3)"
+    cmds:
+      - rm -f optuna_hpo.db
+      - uv run python -m seed_vc.train.train -m experiment=hpo_lab3 {{.CLI_ARGS}}
+
+  hpo:random:
+    desc: "Run Lab 3 HPO sweep with Random sampler for comparison"
+    cmds:
+      - rm -f optuna_hpo.db
+      - uv run python -m seed_vc.train.train -m experiment=hpo_lab3 hparams_search=optuna_random {{.CLI_ARGS}}
+
   eval:comparison:
     desc: "Build the standalone comparison report bundle"
     cmds:

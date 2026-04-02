@@ -69,10 +69,13 @@ data/dataset.csv
 checkpoints/
 demo/generated/
 runs/
+multirun/
 ignore/
+.tmp
 
 *mp3
 
 mlruns.db
+optuna_hpo.db
 
 TODO

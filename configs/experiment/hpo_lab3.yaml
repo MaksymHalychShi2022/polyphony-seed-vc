@@ -24,9 +24,9 @@ hydra:
     n_trials: 20
     params:
       # Learning rate — log-uniform; wide range covers warm fine-tuning and cold starts
-      optimizer.lr: log_interval(1e-5, 1e-3)
+      optimizer.lr: tag(log, interval(1e-5, 1e-3))
       # Weight decay — log-uniform; prevents overfitting without killing gradients
-      optimizer.weight_decay: log_interval(1e-6, 1e-1)
+      optimizer.weight_decay: tag(log, interval(1e-6, 1e-1))
       # Exponential LR decay per step; narrow range keeps schedule meaningful
       optimizer.scheduler.gamma: interval(0.999990, 0.999999)
       # Commitment loss weight (length-regulator VQ quantisation)

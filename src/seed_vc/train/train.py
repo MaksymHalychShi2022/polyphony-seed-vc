@@ -245,8 +245,9 @@ class Trainer:
         self.model.train()
         return avg_loss
 
-    def train(self) -> None:
+    def train(self) -> float | None:
         self.ema_loss = 0.0
+        last_eval_loss: float | None = None
         try:
             for epoch in range(self.n_epochs):
                 self.epoch = epoch
@@ -254,6 +255,7 @@ class Trainer:
                 if (epoch + 1) % self.eval_interval == 0 and self.has_val:
                     eval_loss = self.evaluate()
                     if eval_loss is not None:
+                        last_eval_loss = eval_loss
                         log.info(f"Eval loss at epoch {epoch + 1}: {eval_loss:.4f}")
                 if self.iters >= self.max_steps:
                     break
@@ -274,6 +276,7 @@ class Trainer:
         log.info(f"Final model saved at {save_path}")
 
         self.logger.finalize()
+        return last_eval_loss
 
     def save_state(self, path: str) -> None:
         torch.save(
@@ -357,10 +360,11 @@ def main(cfg: DictConfig) -> None:
         device=device,
     )
     try:
-        trainer.train()
+        result = trainer.train()
     except Exception:
         log.exception("Training failed")
         raise
+    return result
 
 
 if __name__ == "__main__":
