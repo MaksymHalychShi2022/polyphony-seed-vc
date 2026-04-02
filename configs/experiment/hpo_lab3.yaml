@@ -33,5 +33,5 @@ hydra:
       optimizer.loss.commitment_weight: choice(0.01, 0.05, 0.1, 0.2)
       # Codebook loss weight (length-regulator VQ quantisation)
       optimizer.loss.codebook_weight: choice(0.05, 0.1, 0.15, 0.3)
-      # Batch size — bounded by VRAM; 8 is the safe upper limit
-      trainer.batch_size: choice(2, 4, 8)
+      # Batch size — bounded by VRAM; limited to 1 and 2
+      trainer.batch_size: choice(1, 2)
