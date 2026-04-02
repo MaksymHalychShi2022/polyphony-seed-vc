@@ -9,6 +9,38 @@ permissions:
   pull-requests: write
 
 jobs:
+  dag-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Apache Airflow
+        run: |
+          pip install apache-airflow==2.8.4 \
+            --constraint https://raw.githubusercontent.com/apache/airflow/constraints-2.8.4/constraints-3.11.txt
+
+      - name: Install pytest
+        run: pip install pytest
+
+      - name: DAG integrity test
+        env:
+          AIRFLOW_HOME: /tmp/airflow-ci
+        run: |
+          pytest tests/test_dag.py -v
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t seed-vc .
+
   ci:
     runs-on: ubuntu-latest
 

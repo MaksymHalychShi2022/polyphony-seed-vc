@@ -2,6 +2,61 @@
 
 [![GitHub Pages](https://img.shields.io/badge/GitHub%20Pages-Eval%20Report-blue?logo=github)](https://maksymhalychshi2022.github.io/polyphony-seed-vc-evaluation/)
 
+## ML Pipeline Orchestration (Airflow)
+
+The training pipeline is orchestrated with Apache Airflow via Docker Compose.
+
+**First-time setup** — initialize the database and create the admin user:
+
+```bash
+docker compose -f docker-compose.airflow.yml up airflow-init
+```
+
+**Start Airflow:**
+
+```bash
+docker compose -f docker-compose.airflow.yml up -d airflow-webserver airflow-scheduler
+```
+
+Open **http://localhost:8080** and log in with `admin` / `admin`.
+
+**Trigger the pipeline** (manual run):
+
+```bash
+docker compose -f docker-compose.airflow.yml exec airflow-webserver \
+  airflow dags trigger ml_training_pipeline
+```
+
+Or click **Trigger DAG ▶** in the web UI.
+
+**Stop Airflow:**
+
+```bash
+docker compose -f docker-compose.airflow.yml down
+```
+
+The DAG runs these steps in order:
+
+1. **check_data** — verifies `data/processed/train.csv` exists
+2. **prepare_data** — runs `dvc repro` to extract mel / semantic / F0 / speaker features
+3. **train_model** — runs the full training loop
+4. **evaluate_model** — reads the latest MLflow run and pushes metrics to XCom
+5. **branch_on_quality** — registers the model if `train/loss < 10.0`, otherwise stops
+6. **register_model** / **stop_pipeline** — registers to MLflow Model Registry (Staging) or exits
+
+> **Permission note:** Airflow containers run as uid 50000. If BashOperator tasks fail
+> with permission errors on `.venv`, run `chmod -R o+rx .venv` once on the host.
+
+### Save training artifacts
+
+After training, write `metrics.json` and `loss_curve.png` from the latest MLflow run:
+
+```bash
+uv run python scripts/save_artifacts.py
+```
+
+---
+
 ## Start demo app
 
 ```bash

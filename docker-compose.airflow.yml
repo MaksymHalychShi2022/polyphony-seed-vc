@@ -1,0 +1,80 @@
+# Local Apache Airflow deployment for seed-vc ML pipeline orchestration.
+#
+# Usage:
+#   docker compose -f docker-compose.airflow.yml up airflow-init   # first-time DB setup
+#   docker compose -f docker-compose.airflow.yml up -d             # start services
+#   docker compose -f docker-compose.airflow.yml down              # stop services
+#
+# Web UI: http://localhost:8080  (admin / admin)
+#
+# The project directory is mounted at /opt/airflow/project.
+# dvc and mlflow are installed directly into the Airflow container via
+# _PIP_ADDITIONAL_REQUIREMENTS so BashOperator tasks can call them without
+# relying on the host's .venv (which has host-OS-specific shebangs).
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.8.4-python3.11
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__WEBSERVER__SECRET_KEY: "local-dev-secret-change-me"
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+    PROJECT_ROOT: /opt/airflow/project
+    # Make the project package importable inside the container
+    PYTHONPATH: /opt/airflow/project/src
+    # Quality gate threshold — model is registered only when train/loss < this value
+    CFM_LOSS_THRESHOLD: "10.0"
+    # Install dvc + mlflow inside the container at startup
+    _PIP_ADDITIONAL_REQUIREMENTS: "dvc mlflow"
+  env_file:
+    - path: .env
+      required: false
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - airflow-logs:/opt/airflow/logs
+    - .:/opt/airflow/project:rw
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+
+  # One-shot initialisation: migrate DB schema + create admin user
+  airflow-init:
+    <<: *airflow-common
+    command: bash -c "airflow db migrate && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com"
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: unless-stopped
+
+volumes:
+  postgres-db:
+  airflow-logs:
