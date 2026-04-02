@@ -47,3 +47,11 @@ dev = [
     "pytest>=9.0.2",
     "ruff>=0.15.8",
 ]
+
+[tool.ruff]
+exclude = ["src/seed_vc/modules"]
+
+[tool.ruff.lint]
+# Only check for fatal errors — syntax errors and undefined names.
+# Style violations in legacy code are ignored.
+select = ["E9", "F63", "F7", "F82"]
