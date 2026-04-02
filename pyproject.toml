@@ -31,6 +31,7 @@ dependencies = [
     "s3prl>=0.4.10",
     "ten-vad",
     "sqlalchemy>=1.4,<2.0",
+    "pynvml>=13.0.1",
 ]
 
 

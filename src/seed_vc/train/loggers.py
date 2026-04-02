@@ -35,6 +35,7 @@ class MLflowLogger(BaseLogger):
             )
         mlflow.set_tracking_uri(uri)
         mlflow.set_experiment(experiment_name)
+        mlflow.enable_system_metrics_logging()
         mlflow.start_run(run_name=experiment_name)
 
     def log_metric(self, name: str, value: float, step: int) -> None:
