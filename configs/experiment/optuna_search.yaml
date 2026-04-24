@@ -4,9 +4,6 @@
 # Run with TPE sampler (default):
 #   uv run python -m seed_vc.train.train -m experiment=hpo_lab3
 #
-# Run with Random sampler (sampler comparison):
-#   uv run python -m seed_vc.train.train -m experiment=hpo_lab3 hparams_search=optuna_random
-#
 # Override n_trials without editing YAML:
 #   uv run python -m seed_vc.train.train -m experiment=hpo_lab3 hydra.sweeper.n_trials=30
 
@@ -14,13 +11,13 @@ defaults:
   - override /hparams_search: optuna
   - override /logger: mlflow
 
-run_name: "hpo_lab3"
+run_name: "optuna-search"
 seed: 42
 
 hydra:
   sweeper:
     study_name: "seed_vc_hpo"
-    storage: "sqlite:///optuna_hpo.db"   # persists study across runs; required for sampler comparison
+    storage: "sqlite:///optuna_hpo.db"
     n_trials: 20
     params:
       # Learning rate — log-uniform; wide range covers warm fine-tuning and cold starts
@@ -29,9 +26,5 @@ hydra:
       optimizer.weight_decay: tag(log, interval(1e-6, 1e-1))
       # Exponential LR decay per step; narrow range keeps schedule meaningful
       optimizer.scheduler.gamma: interval(0.999990, 0.999999)
-      # Commitment loss weight (length-regulator VQ quantisation)
-      optimizer.loss.commitment_weight: choice(0.01, 0.05, 0.1, 0.2)
-      # Codebook loss weight (length-regulator VQ quantisation)
-      optimizer.loss.codebook_weight: choice(0.05, 0.1, 0.15, 0.3)
-      # Batch size — bounded by VRAM; 8 is the safe upper limit
-      trainer.batch_size: choice(2, 4, 8)
+      # Batch size — bounded by VRAM
+      trainer.batch_size: choice(2, 4)
