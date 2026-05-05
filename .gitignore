@@ -79,3 +79,5 @@ mlruns.db
 optuna_hpo.db
 
 TODO
+
+gdrive_service_account_json_file_path.json

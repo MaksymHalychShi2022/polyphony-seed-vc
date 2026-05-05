@@ -2,3 +2,5 @@
     remote = gdrive
 ['remote "gdrive"']
     url = gdrive://1xjXMHqo4mq21QohO18wDhHDc0Eg6UbFY
+    gdrive_use_service_account = true
+    gdrive_service_account_json_file_path = ../gdrive_service_account_json_file_path.json
