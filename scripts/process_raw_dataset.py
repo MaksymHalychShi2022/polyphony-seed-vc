@@ -26,9 +26,10 @@ import librosa
 import numpy as np
 import pyloudnorm as pyln
 import soundfile as sf
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
-from preprocess_audio_utils import compute_singmos_mean_for_audio, compute_vad_track
+from preprocess_audio_utils import compute_vad_track, score_songs_singmos
 
 
 def list_song_dirs(raw_dir: Path) -> list[Path]:
@@ -223,16 +224,14 @@ def load_song_data(
     return stem_names, waves, mix
 
 
-def score_song(
-    song_dir: Path, sr: int, singmos_chunk_seconds: int
-) -> tuple[float, int]:
-    stem_names, _, mix = load_song_data(song_dir, sr=sr)
-    score = compute_singmos_mean_for_audio(
-        mix,
-        sr=sr,
-        chunk_seconds=singmos_chunk_seconds,
-    )
-    return score, len(stem_names)
+def _load_song_for_scoring(
+    song_dir: Path, sr: int
+) -> tuple[str, list[str], np.ndarray] | tuple[str, Exception]:
+    try:
+        stem_names, _, mix = load_song_data(song_dir, sr=sr)
+        return song_dir.name, stem_names, mix
+    except Exception as exc:
+        return song_dir.name, exc  # type: ignore[return-value]
 
 
 def select_songs(
@@ -241,27 +240,73 @@ def select_songs(
     max_songs: int,
     quality_threshold: float,
     singmos_chunk_seconds: int,
+    num_workers: int = 4,
+    songs_per_batch: int = 32,
 ) -> tuple[list[Path], list[dict[str, Any]]]:
+    """Load songs in parallel, then score each mini-batch with a single cross-song GPU pass."""
     records: list[dict[str, Any]] = []
     scoreable: list[dict[str, Any]] = []
+    score_map: dict[str, float] = {}
+    stem_count_map: dict[str, int] = {}
+    load_error_map: dict[str, Exception] = {}
 
-    for song_dir in tqdm(song_dirs, desc="Scoring songs", unit="song"):
-        record: dict[str, Any] = {
-            "song_name": song_dir.name,
-            "selected": False,
-        }
-        try:
-            score, n_stems = score_song(
-                song_dir=song_dir,
-                sr=sr,
-                singmos_chunk_seconds=singmos_chunk_seconds,
+    n_batches = math.ceil(len(song_dirs) / songs_per_batch)
+    progress = tqdm(total=len(song_dirs), desc="Scoring songs", unit="song")
+
+    for batch_idx in range(n_batches):
+        batch_dirs = song_dirs[
+            batch_idx * songs_per_batch : (batch_idx + 1) * songs_per_batch
+        ]
+
+        # Parallel audio loading (I/O-bound)
+        loaded: dict[str, tuple[list[str], np.ndarray] | Exception] = {}
+        with ThreadPoolExecutor(max_workers=num_workers) as pool:
+            futures = {
+                pool.submit(_load_song_for_scoring, d, sr): d for d in batch_dirs
+            }
+            for future in as_completed(futures):
+                result = future.result()
+                name = result[0]
+                if isinstance(result[1], Exception):
+                    loaded[name] = result[1]
+                else:
+                    _, stem_names, mix = result
+                    loaded[name] = (stem_names, mix)
+
+        # Collect valid mixes for a single batched GPU pass
+        valid_names = [
+            d.name for d in batch_dirs if not isinstance(loaded[d.name], Exception)
+        ]
+        mixes = [loaded[n][1] for n in valid_names]  # type: ignore[index]
+
+        if mixes:
+            batch_scores = score_songs_singmos(
+                mixes, sr, chunk_seconds=singmos_chunk_seconds
             )
-            record["quality_score"] = score
-            record["input_stem_count"] = n_stems
-            scoreable.append(record)
-        except Exception as exc:
+            for name, score in zip(valid_names, batch_scores):
+                score_map[name] = score
+                stem_count_map[name] = len(loaded[name][0])  # type: ignore[index]
+
+        for name, data in loaded.items():
+            if isinstance(data, Exception):
+                load_error_map[name] = data
+
+        progress.update(len(batch_dirs))
+
+    progress.close()
+
+    for song_dir in song_dirs:
+        record: dict[str, Any] = {"song_name": song_dir.name, "selected": False}
+        if song_dir.name in load_error_map:
             record["quality_score"] = None
-            record["selection_reason"] = f"score_failed: {exc}"
+            record["selection_reason"] = (
+                f"score_failed: {load_error_map[song_dir.name]}"
+            )
+        else:
+            score = score_map.get(song_dir.name, float("nan"))
+            record["quality_score"] = score
+            record["input_stem_count"] = stem_count_map.get(song_dir.name, 0)
+            scoreable.append(record)
         records.append(record)
 
     threshold_enabled = quality_threshold >= 0.0
@@ -555,6 +600,18 @@ def process_song(
     default="PCM_24",
     help="SoundFile FLAC subtype (e.g. PCM_16, PCM_24)",
 )
+@click.option(
+    "--num-workers",
+    type=int,
+    default=4,
+    help="Number of parallel threads for audio loading during song scoring",
+)
+@click.option(
+    "--songs-per-batch",
+    type=int,
+    default=32,
+    help="Songs to load and score together per GPU pass (trades RAM for GPU utilization)",
+)
 def main(
     sr: int,
     chunk_seconds: float,
@@ -574,6 +631,8 @@ def main(
     min_source_activity_ratio: float,
     min_polyphony_ratio: float,
     subtype: str,
+    num_workers: int,
+    songs_per_batch: int,
 ) -> None:
     if min_chunk_seconds <= 0:
         raise click.ClickException("--min-chunk-seconds must be > 0")
@@ -594,6 +653,8 @@ def main(
         max_songs=int(max_songs),
         quality_threshold=float(quality_threshold),
         singmos_chunk_seconds=int(singmos_chunk_seconds),
+        num_workers=int(num_workers),
+        songs_per_batch=int(songs_per_batch),
     )
     if not selected_song_dirs:
         raise click.ClickException("No songs selected after quality filtering")

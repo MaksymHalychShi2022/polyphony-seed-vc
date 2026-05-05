@@ -50,34 +50,91 @@ def load_singmos_predictor() -> Any:
         "South-Twilight/SingMOS:v1.1.2", "singmos_pro", trust_repo=True
     )
     predictor.eval()
-    return predictor
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return predictor.to(device)
+
+
+def _audio_to_chunks(wave: np.ndarray, chunk_samples: int) -> list[np.ndarray]:
+    return [
+        np.asarray(wave[s : s + chunk_samples], dtype=np.float32)
+        for s in range(0, wave.shape[0], chunk_samples)
+        if wave[s : s + chunk_samples].size > 0
+    ]
+
+
+def _run_singmos_inference(
+    chunks: list[np.ndarray],
+    predictor: Any,
+    device: torch.device,
+    batch_size: int,
+) -> list[float]:
+    """Pad-and-batch a flat list of 1-D chunks through SingMOS in one or more forward passes."""
+    max_len = max(c.shape[0] for c in chunks)
+    scores: list[float] = []
+    for i in range(0, len(chunks), batch_size):
+        batch = chunks[i : i + batch_size]
+        padded = np.stack(
+            [
+                np.pad(c, (0, max_len - c.shape[0])) if c.shape[0] < max_len else c
+                for c in batch
+            ]
+        )
+        # Model expects [B, 1, T]; squeeze(1) inside SSL_Model gives [B, T] for S3PRL.
+        batch_t = torch.from_numpy(padded).unsqueeze(1).to(device)
+        lengths = torch.tensor([c.shape[0] for c in batch], dtype=torch.long)
+        with torch.no_grad():
+            out = predictor(batch_t, lengths).cpu()
+        scores.extend(out.tolist() if out.dim() > 0 else [out.item()])
+    return scores
+
+
+def score_songs_singmos(
+    mixes: list[np.ndarray],
+    sr: int,
+    chunk_seconds: int = 5,
+    batch_size: int = 64,
+) -> list[float]:
+    """Score a batch of songs with SingMOS in a single GPU inference pass.
+
+    All chunks from all songs are pooled together so the GPU sees large,
+    contiguous batches instead of one tiny per-song batch.
+    Returns one mean MOS score per input mix (nan if audio is empty).
+    """
+    predictor = load_singmos_predictor()
+    device = next(predictor.parameters()).device
+    chunk_samples = max(1, int(chunk_seconds) * SINGMOS_SAMPLE_RATE)
+
+    all_chunks: list[np.ndarray] = []
+    chunk_owner: list[int] = []
+
+    for song_idx, audio in enumerate(mixes):
+        wave = _resample_audio(audio, sr, SINGMOS_SAMPLE_RATE)
+        for chunk in _audio_to_chunks(wave, chunk_samples):
+            all_chunks.append(chunk)
+            chunk_owner.append(song_idx)
+
+    if not all_chunks:
+        return [float("nan")] * len(mixes)
+
+    flat_scores = _run_singmos_inference(all_chunks, predictor, device, batch_size)
+
+    per_song: list[list[float]] = [[] for _ in mixes]
+    for chunk_idx, song_idx in enumerate(chunk_owner):
+        per_song[song_idx].append(flat_scores[chunk_idx])
+
+    return [float(np.mean(s)) if s else float("nan") for s in per_song]
 
 
 def compute_singmos_mean_for_audio(
     audio: np.ndarray,
     sr: int,
     chunk_seconds: int = 5,
+    batch_size: int = 64,
 ) -> float:
-    wave = _resample_audio(audio, sr, SINGMOS_SAMPLE_RATE)
-    if wave.size == 0:
-        raise ValueError("audio is empty")
-
-    predictor = load_singmos_predictor()
-    chunk_samples = max(1, int(chunk_seconds) * SINGMOS_SAMPLE_RATE)
-    scores: list[float] = []
-    for start in range(0, wave.shape[0], chunk_samples):
-        chunk = np.asarray(wave[start : start + chunk_samples], dtype=np.float32)
-        if chunk.size == 0:
-            continue
-        chunk_t = torch.from_numpy(chunk).unsqueeze(0)
-        length = torch.tensor([chunk_t.shape[1]], dtype=torch.long)
-        with torch.no_grad():
-            score = predictor(chunk_t, length)
-        scores.append(float(score.item()))
-
-    if not scores:
+    score = score_songs_singmos([audio], sr, chunk_seconds, batch_size)[0]
+    if np.isnan(score):
         raise ValueError("no audio chunks available for SingMOS")
-    return float(np.mean(np.asarray(scores, dtype=np.float32)))
+    return score
 
 
 @dataclass(frozen=True)
