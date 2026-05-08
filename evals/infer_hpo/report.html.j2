@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Seed-VC Inference HPO Report</title>
+  <style>
+    :root {
+      --bg: #f5efe7;
+      --panel: rgba(255, 253, 248, 0.98);
+      --ink: #1f2937;
+      --muted: #6b7280;
+      --line: #ddd3c6;
+      --accent: #0f766e;
+      --accent-soft: #d8f3ef;
+      --best: #14532d;
+      --best-bg: #dcfce7;
+      --shadow: 0 12px 28px rgba(17, 24, 39, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top right, rgba(15, 118, 110, 0.10), transparent 25%),
+        linear-gradient(180deg, #faf7f2 0%, var(--bg) 100%);
+      min-height: 100vh;
+    }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
+
+    .hero {
+      background: linear-gradient(135deg, rgba(255, 245, 214, 0.92), rgba(216, 243, 239, 0.96));
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 24px 28px;
+      margin-bottom: 20px;
+      box-shadow: var(--shadow);
+    }
+    h1 { margin: 0 0 10px; font-size: 28px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px 20px; color: var(--muted); font-size: 13px; }
+    .meta span { display: flex; align-items: center; gap: 4px; }
+
+    .params-row {
+      display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px;
+    }
+    .param-chip {
+      background: var(--accent-soft);
+      border: 1px solid rgba(15, 118, 110, 0.3);
+      border-radius: 20px;
+      padding: 3px 12px;
+      font-size: 13px;
+      color: #0b5c55;
+      font-family: "Fira Code", monospace;
+    }
+
+    .table-wrap {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    thead { background: #f2ede5; }
+    th {
+      padding: 12px 16px;
+      text-align: left;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    th:hover { color: var(--accent); }
+    th .sort-arrow { display: inline-block; margin-left: 4px; opacity: 0.4; }
+    th.sorted-asc .sort-arrow::after { content: " ▲"; opacity: 1; color: var(--accent); }
+    th.sorted-desc .sort-arrow::after { content: " ▼"; opacity: 1; color: var(--accent); }
+    th:not(.sorted-asc):not(.sorted-desc) .sort-arrow::after { content: " ⇅"; }
+
+    td {
+      padding: 11px 16px;
+      font-size: 14px;
+      border-top: 1px solid var(--line);
+    }
+    tr:hover td { background: rgba(15, 118, 110, 0.04); }
+
+    .rank-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      font-weight: 700;
+      font-size: 13px;
+    }
+    .rank-1 { background: #fef08a; color: #713f12; }
+    .rank-2 { background: #e2e8f0; color: #334155; }
+    .rank-3 { background: #fed7aa; color: #7c2d12; }
+    .rank-other { background: #f1f5f9; color: var(--muted); }
+
+    .slug { font-family: "Fira Code", monospace; font-size: 12px; color: var(--muted); }
+    .num { font-variant-numeric: tabular-nums; }
+
+    td.best {
+      background: var(--best-bg);
+      color: var(--best);
+      font-weight: 700;
+    }
+    td.na { color: var(--muted); font-style: italic; }
+
+    .direction-hint {
+      font-size: 10px;
+      font-weight: 400;
+      color: var(--muted);
+      text-transform: none;
+      letter-spacing: 0;
+    }
+
+    tfoot td {
+      border-top: 2px solid var(--line);
+      font-size: 12px;
+      color: var(--muted);
+      padding: 8px 16px;
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <h1>Inference HPO Report</h1>
+    <div class="meta">
+      <span>Generated: {{ generated_at }}</span>
+      <span>Combos: {{ combos | length }}</span>
+      {% if checkpoint %}<span>Checkpoint: {{ checkpoint | truncate(60) }}</span>{% endif %}
+    </div>
+    <div class="params-row">
+      <span class="param-chip">steps: {{ grid_params.diffusion_steps | join(", ") }}</span>
+      <span class="param-chip">cfg_rate: {{ grid_params.cfg_rates | join(", ") }}</span>
+      <span class="param-chip">length_adjust: {{ grid_params.length_adjust }}</span>
+      <span class="param-chip">auto_f0_adjust: {{ grid_params.auto_f0_adjust }}</span>
+      <span class="param-chip">pitch_shift: {{ grid_params.pitch_shift }}</span>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table id="results-table">
+      <thead>
+        <tr>
+          <th data-col="rank" data-dir="asc" class="sorted-asc">Rank<span class="sort-arrow"></span></th>
+          <th data-col="slug">Combo<span class="sort-arrow"></span></th>
+          <th data-col="steps" data-type="num">Steps<span class="sort-arrow"></span></th>
+          <th data-col="cfg" data-type="num">CFG rate<span class="sort-arrow"></span></th>
+          <th data-col="resemblyzer" data-type="num" data-higher="true">
+            Resemblyzer <span class="direction-hint">↑ higher</span><span class="sort-arrow"></span>
+          </th>
+          <th data-col="f0_rmse" data-type="num" data-higher="false">
+            F0 RMSE <span class="direction-hint">↓ lower</span><span class="sort-arrow"></span>
+          </th>
+          <th data-col="f0_corr" data-type="num" data-higher="true">
+            F0 corr <span class="direction-hint">↑ higher</span><span class="sort-arrow"></span>
+          </th>
+          <th data-col="singmos" data-type="num" data-higher="true">
+            SingMOS <span class="direction-hint">↑ higher</span><span class="sort-arrow"></span>
+          </th>
+          <th data-col="gen_time" data-type="num">
+            Gen time (s)<span class="sort-arrow"></span>
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for combo in combos %}
+        {% set m = combo.metrics %}
+        <tr
+          data-rank="{{ combo.rank }}"
+          data-slug="{{ combo.slug }}"
+          data-steps="{{ combo.params.diffusion_steps }}"
+          data-cfg="{{ combo.params.cfg_rate }}"
+          data-resemblyzer="{{ m.resemblyzer_similarity if m.resemblyzer_similarity is not none else '' }}"
+          data-f0_rmse="{{ m.f0_rmse if m.f0_rmse is not none else '' }}"
+          data-f0_corr="{{ m.f0_correlation if m.f0_correlation is not none else '' }}"
+          data-singmos="{{ m.singmos_naturalness if m.singmos_naturalness is not none else '' }}"
+          data-gen_time="{{ '%.2f' | format(combo.generation_seconds) }}"
+        >
+          <td>
+            <span class="rank-badge {% if combo.rank == 1 %}rank-1{% elif combo.rank == 2 %}rank-2{% elif combo.rank == 3 %}rank-3{% else %}rank-other{% endif %}">
+              {{ combo.rank }}
+            </span>
+          </td>
+          <td class="slug">{{ combo.slug }}</td>
+          <td class="num">{{ combo.params.diffusion_steps }}</td>
+          <td class="num">{{ "%.2f" | format(combo.params.cfg_rate) }}</td>
+          <td class="num{% if m.resemblyzer_similarity is none %} na{% endif %}" data-metric="resemblyzer">
+            {% if m.resemblyzer_similarity is not none %}{{ "%.4f" | format(m.resemblyzer_similarity) }}{% else %}N/A{% endif %}
+          </td>
+          <td class="num{% if m.f0_rmse is none %} na{% endif %}" data-metric="f0_rmse">
+            {% if m.f0_rmse is not none %}{{ "%.3f" | format(m.f0_rmse) }}{% else %}N/A{% endif %}
+          </td>
+          <td class="num{% if m.f0_correlation is none %} na{% endif %}" data-metric="f0_corr">
+            {% if m.f0_correlation is not none %}{{ "%.4f" | format(m.f0_correlation) }}{% else %}N/A{% endif %}
+          </td>
+          <td class="num{% if m.singmos_naturalness is none %} na{% endif %}" data-metric="singmos">
+            {% if m.singmos_naturalness is not none %}{{ "%.4f" | format(m.singmos_naturalness) }}{% else %}N/A{% endif %}
+          </td>
+          <td class="num">{{ "%.2f" | format(combo.generation_seconds) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="9">
+            Ranked by Resemblyzer similarity (↑). Click any column header to re-sort.
+          </td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+
+<script>
+(function () {
+  const table = document.getElementById("results-table");
+  const tbody = table.querySelector("tbody");
+  const headers = table.querySelectorAll("thead th[data-col]");
+
+  // highlight best per metric column
+  const metricCols = {
+    resemblyzer: { higher: true },
+    f0_rmse:     { higher: false },
+    f0_corr:     { higher: true },
+    singmos:     { higher: true },
+  };
+
+  function highlightBest() {
+    Object.entries(metricCols).forEach(([metric, { higher }]) => {
+      const cells = Array.from(tbody.querySelectorAll(`td[data-metric="${metric}"]`));
+      const values = cells.map(c => parseFloat(c.textContent));
+      const valid = values.filter(v => !isNaN(v));
+      if (!valid.length) return;
+      const best = higher ? Math.max(...valid) : Math.min(...valid);
+      cells.forEach((c, i) => {
+        c.classList.toggle("best", !isNaN(values[i]) && values[i] === best);
+      });
+    });
+  }
+
+  highlightBest();
+
+  // column sorting
+  let currentCol = "rank";
+  let currentAsc = true;
+
+  function colValue(row, col) {
+    const v = row.dataset[col];
+    if (v === "" || v === undefined) return null;
+    return isNaN(Number(v)) ? v : Number(v);
+  }
+
+  function sortBy(col, asc) {
+    const rows = Array.from(tbody.querySelectorAll("tr"));
+    rows.sort((a, b) => {
+      const va = colValue(a, col);
+      const vb = colValue(b, col);
+      if (va === null && vb === null) return 0;
+      if (va === null) return 1;
+      if (vb === null) return -1;
+      if (typeof va === "string") return asc ? va.localeCompare(vb) : vb.localeCompare(va);
+      return asc ? va - vb : vb - va;
+    });
+    rows.forEach(r => tbody.appendChild(r));
+    highlightBest();
+  }
+
+  headers.forEach(th => {
+    th.addEventListener("click", () => {
+      const col = th.dataset.col;
+      if (currentCol === col) {
+        currentAsc = !currentAsc;
+      } else {
+        currentCol = col;
+        currentAsc = true;
+      }
+      headers.forEach(h => h.classList.remove("sorted-asc", "sorted-desc"));
+      th.classList.add(currentAsc ? "sorted-asc" : "sorted-desc");
+      sortBy(col, currentAsc);
+    });
+  });
+})();
+</script>
+</body>
+</html>

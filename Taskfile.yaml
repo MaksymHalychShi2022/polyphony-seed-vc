@@ -124,6 +124,19 @@ tasks:
       - rm -f optuna_hpo.db
       - uv run python -m seed_vc.train.train -m experiment=optuna_search {{.CLI_ARGS}}
 
+  eval:infer-hpo:
+    desc: "Run inference hyperparameter grid search (diffusion_steps × cfg_rate)"
+    vars:
+      CONFIG: configs/presets/config_dit_mel_seed_uvit_whisper_base_f0_44k.yml
+      CHECKPOINT: ""
+      SPLIT: val
+    cmds:
+      - >
+        uv run python evals/infer_hpo/run.py
+        --config {{.CONFIG}}
+        --split {{.SPLIT}}
+        {{if ne .CHECKPOINT ""}}--checkpoint {{.CHECKPOINT}}{{end}}
+
   eval:comparison:
     desc: "Build the standalone comparison report bundle"
     cmds:

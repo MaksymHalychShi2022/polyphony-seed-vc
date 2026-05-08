@@ -61,6 +61,9 @@ openspec/
 
 CLAUDE.md
 
+# === Inference HPO results ===
+evals/infer_hpo/results/
+
 # === Project Specific ===
 .cache/
 data/example
