@@ -6,7 +6,7 @@ tasks:
   demo:
     desc: "Run gradio demo"
     cmds:
-      - uv run python -m apps.demo.app --checkpoint runs/my_run/DiT_epoch_00007_step_00800.pth --config  configs/presets/config_dit_mel_seed_uvit_whisper_base_f0_44k.yml
+      - uv run python -m apps.demo.app
 
   singmos:
     desc: "Run SingMOS scoring demo"
@@ -121,6 +121,7 @@ tasks:
   hpo:
     desc: "Run HPO sweep with Optuna TPE sampler (experiment=optuna_search)"
     cmds:
+      - rm -f optuna_hpo.db
       - uv run python -m seed_vc.train.train -m experiment=optuna_search {{.CLI_ARGS}}
 
   eval:comparison:
