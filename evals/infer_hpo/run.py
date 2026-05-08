@@ -44,14 +44,31 @@ from eval.cli import (  # noqa: E402
     generate_audio,
     load_json,
     load_vocoder,
-    resolve_checkpoint_path,
     resolve_device,
     run_compute_metrics_stage,
     save_json,
     utc_now_iso,
 )
+from seed_vc.modules.vc_wrapper import (  # noqa: E402
+    DEFAULT_CHECKPOINT,
+    DEFAULT_CHECKPOINT_REPO_ID,
+)
 from seed_vc.train.features_dataset import build_features_dataloader  # noqa: E402
 from seed_vc.train.seed_vc_model import SeedVCModel  # noqa: E402
+from seed_vc.utils.hf_utils import load_custom_model_from_hf  # noqa: E402
+
+
+def resolve_checkpoint_path(checkpoint: str | None) -> str:
+    if checkpoint:
+        return checkpoint
+    log.info(
+        f"No checkpoint given — using default: {DEFAULT_CHECKPOINT_REPO_ID}/{DEFAULT_CHECKPOINT}"
+    )
+    ckpt = load_custom_model_from_hf(
+        DEFAULT_CHECKPOINT_REPO_ID, DEFAULT_CHECKPOINT, None
+    )
+    return ckpt[0] if isinstance(ckpt, tuple) else ckpt
+
 
 TEMPLATE_PATH = Path(__file__).parent / "report.html.j2"
 RESULTS_ROOT = Path(__file__).parent / "results"
@@ -586,14 +603,19 @@ def main(
         )
     log.info(f"Cached {len(batches)} val batches.")
 
-    checkpoint_path = resolve_checkpoint_path(config, checkpoint)
-    log.info(f"Loading model from {checkpoint_path}...")
+    log.info("Resolving checkpoint (will download from HuggingFace if not cached)...")
+    checkpoint_path = resolve_checkpoint_path(checkpoint)
+    log.info(f"Checkpoint resolved: {checkpoint_path}")
+    log.info("Building model structure and moving to device...")
     model = SeedVCModel(config["model_params"]).to(torch_device)
+    log.info("Loading weights from checkpoint (may take 30-60s for large files)...")
     model.load_weights(checkpoint_path)
+    log.info("Setting up KV caches...")
     model.eval()
     model.setup_caches(max_batch_size=1, max_seq_length=8192)
+    log.info("Loading vocoder...")
     vocoder = load_vocoder(config, torch_device)
-    log.info("Model and vocoder loaded.")
+    log.info("Model and vocoder ready.")
 
     progress = Progress(
         TextColumn("[progress.description]{task.description}"),
