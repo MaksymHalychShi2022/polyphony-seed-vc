@@ -137,6 +137,17 @@ tasks:
         --split {{.SPLIT}}
         {{if ne .CHECKPOINT ""}}--checkpoint {{.CHECKPOINT}}{{end}}
 
+  eval:dataset-eda:
+    desc: "Generate HTML dataset EDA report from processed train/val CSVs"
+    vars:
+      RAW_DIR: ""
+      SCORES: ""
+    cmds:
+      - >
+        uv run python evals/dataset_eda/run.py
+        {{if ne .RAW_DIR ""}}--raw-dir {{.RAW_DIR}}{{end}}
+        {{if ne .SCORES ""}}--scores {{.SCORES}}{{end}}
+
   eval:comparison:
     desc: "Build the standalone comparison report bundle"
     cmds:

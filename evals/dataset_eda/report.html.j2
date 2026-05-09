@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dataset EDA Report</title>
+  <style>
+    :root {
+      --bg: #f5efe7;
+      --panel: rgba(255, 253, 248, 0.98);
+      --ink: #1f2937;
+      --muted: #6b7280;
+      --line: #ddd3c6;
+      --accent: #0f766e;
+      --accent-soft: #d8f3ef;
+      --warn: #92400e;
+      --warn-bg: #fef3c7;
+      --shadow: 0 12px 28px rgba(17, 24, 39, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top right, rgba(15, 118, 110, 0.10), transparent 25%),
+        linear-gradient(180deg, #faf7f2 0%, var(--bg) 100%);
+      min-height: 100vh;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+
+    /* Hero */
+    .hero {
+      background: linear-gradient(135deg, rgba(255, 245, 214, 0.92), rgba(216, 243, 239, 0.96));
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 24px 28px;
+      margin-bottom: 20px;
+      box-shadow: var(--shadow);
+    }
+    h1 { margin: 0 0 8px; font-size: 26px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 6px 20px; color: var(--muted); font-size: 13px; }
+    .meta span { display: flex; align-items: center; gap: 4px; }
+    .chip {
+      display: inline-block;
+      background: var(--accent-soft);
+      border: 1px solid rgba(15, 118, 110, 0.3);
+      border-radius: 20px;
+      padding: 2px 10px;
+      font-size: 12px;
+      color: #0b5c55;
+      font-family: "Fira Code", monospace;
+      margin-top: 10px;
+      margin-right: 6px;
+    }
+
+    /* Stat cards */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+    }
+    .card-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+    .card-value { font-size: 28px; font-weight: 700; color: var(--accent); margin: 4px 0 0; line-height: 1; }
+    .card-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+    /* Panels */
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 22px 24px;
+      margin-bottom: 20px;
+      box-shadow: var(--shadow);
+    }
+    .panel h2 { margin: 0 0 16px; font-size: 17px; color: var(--ink); border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+    .panel h3 { margin: 16px 0 8px; font-size: 14px; color: var(--muted); font-weight: 600; }
+
+    .na-note {
+      color: var(--muted);
+      font-style: italic;
+      font-size: 13px;
+      padding: 8px 0;
+    }
+
+    .warn-box {
+      background: var(--warn-bg);
+      border-left: 4px solid #f59e0b;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 13px;
+      color: var(--warn);
+      margin-bottom: 14px;
+    }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    thead { background: #f2ede5; }
+    th { padding: 9px 12px; text-align: left; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); white-space: nowrap; }
+    td { padding: 9px 12px; border-top: 1px solid var(--line); }
+    tr:hover td { background: rgba(15, 118, 110, 0.04); }
+    .num { font-variant-numeric: tabular-nums; text-align: right; }
+    .highlight td { background: var(--warn-bg) !important; font-weight: 600; color: var(--warn); }
+
+    /* Two-col layout */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 680px) { .two-col { grid-template-columns: 1fr; } }
+
+    /* Chart canvas */
+    .chart-wrap { position: relative; height: 200px; margin-bottom: 12px; }
+    canvas { width: 100% !important; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Hero -->
+  <div class="hero">
+    <h1>Dataset EDA Report</h1>
+    <div class="meta">
+      <span>Generated: {{ generated_at }}</span>
+      <span>Total pairs: {{ segment.total_pairs }}</span>
+      <span>Total hours: {{ "%.2f" | format(segment.total_duration_h) }} h</span>
+    </div>
+    {% if inputs.processed_dir %}<span class="chip">processed: {{ inputs.processed_dir }}</span>{% endif %}
+    {% if inputs.raw_dir %}<span class="chip">raw: {{ inputs.raw_dir }}</span>{% endif %}
+    {% if inputs.scores %}<span class="chip">scores: {{ inputs.scores }}</span>{% endif %}
+  </div>
+
+  <!-- Summary cards -->
+  <div class="cards">
+    <div class="card">
+      <div class="card-label">Total pairs</div>
+      <div class="card-value">{{ segment.total_pairs }}</div>
+      <div class="card-sub">source→target segments</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Train pairs</div>
+      <div class="card-value">{{ segment.train_count }}</div>
+      <div class="card-sub">{{ "%.0f" | format(segment.train_ratio * 100) }}% of total</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Val pairs</div>
+      <div class="card-value">{{ segment.val_count }}</div>
+      <div class="card-sub">{{ "%.0f" | format(segment.val_ratio * 100) }}% of total</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Total hours</div>
+      <div class="card-value">{{ "%.1f" | format(segment.total_duration_h) }}</div>
+      <div class="card-sub">source audio</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Unique songs</div>
+      <div class="card-value">{{ segment.unique_songs }}</div>
+      <div class="card-sub">in dataset</div>
+    </div>
+    {% if raw %}
+    <div class="card">
+      <div class="card-label">Raw songs</div>
+      <div class="card-value">{{ raw.total_songs }}</div>
+      <div class="card-sub">before filtering</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Raw hours</div>
+      <div class="card-value">{{ "%.1f" | format(raw.total_raw_hours) }}</div>
+      <div class="card-sub">total raw audio</div>
+    </div>
+    {% endif %}
+    {% if filter %}
+    <div class="card">
+      <div class="card-label">Kept</div>
+      <div class="card-value">{{ filter.kept_songs }}</div>
+      <div class="card-sub">{{ "%.0f" | format(filter.keep_rate * 100) }}% keep rate</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Segment statistics -->
+  <div class="panel">
+    <h2>Segment Statistics</h2>
+
+    {% if segment.is_imbalanced %}
+    <div class="warn-box">
+      ⚠ Dataset may be imbalanced: max pairs per song ({{ segment.per_song_max }}) &gt; 3× median ({{ "%.0f" | format(segment.per_song_median) }}).
+    </div>
+    {% endif %}
+
+    <div class="two-col">
+      <div>
+        <h3>Duration distribution — train vs val (seconds)</h3>
+        {{ dur_svg | safe }}
+        <table>
+          <thead><tr><th>Bucket</th><th class="num">Count</th></tr></thead>
+          <tbody>
+            {% for row in segment.duration_histogram.rows %}
+            <tr><td>{{ row[0] }} s</td><td class="num">{{ row[1] }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div>
+        <h3>Train / Val split</h3>
+        <table>
+          <thead><tr><th>Split</th><th class="num">Pairs</th><th class="num">Hours</th><th class="num">Mean (s)</th><th class="num">Median (s)</th></tr></thead>
+          <tbody>
+            {% if segment.train_stats %}
+            <tr>
+              <td>Train</td>
+              <td class="num">{{ segment.train_stats.count }}</td>
+              <td class="num">{{ "%.2f" | format(segment.train_stats.total_h) }}</td>
+              <td class="num">{{ "%.1f" | format(segment.train_stats.mean_s) }}</td>
+              <td class="num">{{ "%.1f" | format(segment.train_stats.median_s) }}</td>
+            </tr>
+            {% endif %}
+            {% if segment.val_stats %}
+            <tr>
+              <td>Val</td>
+              <td class="num">{{ segment.val_stats.count }}</td>
+              <td class="num">{{ "%.2f" | format(segment.val_stats.total_h) }}</td>
+              <td class="num">{{ "%.1f" | format(segment.val_stats.mean_s) }}</td>
+              <td class="num">{{ "%.1f" | format(segment.val_stats.median_s) }}</td>
+            </tr>
+            {% endif %}
+          </tbody>
+        </table>
+
+        {% if segment.all_stats %}
+        <h3>Duration percentiles (all)</h3>
+        <table>
+          <thead><tr><th>Stat</th><th class="num">Value (s)</th></tr></thead>
+          <tbody>
+            <tr><td>Min</td><td class="num">{{ "%.2f" | format(segment.all_stats.min_s) }}</td></tr>
+            <tr><td>P10</td><td class="num">{{ "%.2f" | format(segment.all_stats.p10_s) }}</td></tr>
+            <tr><td>Mean</td><td class="num">{{ "%.2f" | format(segment.all_stats.mean_s) }}</td></tr>
+            <tr><td>Median</td><td class="num">{{ "%.2f" | format(segment.all_stats.median_s) }}</td></tr>
+            <tr><td>P90</td><td class="num">{{ "%.2f" | format(segment.all_stats.p90_s) }}</td></tr>
+            <tr><td>Max</td><td class="num">{{ "%.2f" | format(segment.all_stats.max_s) }}</td></tr>
+          </tbody>
+        </table>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Per-song pair distribution -->
+  <div class="panel">
+    <h2>Per-Song Pair Count Distribution</h2>
+    <div class="two-col">
+      <div>
+        <h3>Top 5 — most pairs</h3>
+        <table>
+          <thead><tr><th>Song</th><th class="num">Pairs</th></tr></thead>
+          <tbody>
+            {% for song_id, count in segment.top5_songs %}
+            <tr {% if segment.is_imbalanced and loop.first %}class="highlight"{% endif %}>
+              <td>{{ song_id }}</td>
+              <td class="num">{{ count }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <h3>Bottom 5 — fewest pairs</h3>
+        <table>
+          <thead><tr><th>Song</th><th class="num">Pairs</th></tr></thead>
+          <tbody>
+            {% for song_id, count in segment.bottom5_songs %}
+            <tr><td>{{ song_id }}</td><td class="num">{{ count }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <h3>Summary</h3>
+    <table>
+      <thead><tr><th>Metric</th><th class="num">Value</th></tr></thead>
+      <tbody>
+        <tr><td>Min pairs/song</td><td class="num">{{ segment.per_song_min }}</td></tr>
+        <tr><td>Max pairs/song</td><td class="num">{{ segment.per_song_max }}</td></tr>
+        <tr><td>Mean pairs/song</td><td class="num">{{ "%.1f" | format(segment.per_song_mean) }}</td></tr>
+        <tr><td>Median pairs/song</td><td class="num">{{ "%.0f" | format(segment.per_song_median) }}</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Raw statistics -->
+  <div class="panel">
+    <h2>Raw Dataset Statistics</h2>
+    {% if raw %}
+    <div class="two-col">
+      <div>
+        <h3>Mic track count per song</h3>
+        <div class="chart-wrap">
+          <canvas id="track-hist"></canvas>
+        </div>
+        <table>
+          <thead><tr><th>Tracks</th><th class="num">Songs</th></tr></thead>
+          <tbody>
+            {% for row in raw.track_histogram.rows %}
+            <tr><td>{{ row[0] }}</td><td class="num">{{ row[1] }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <h3>Summary</h3>
+        <table>
+          <thead><tr><th>Metric</th><th class="num">Value</th></tr></thead>
+          <tbody>
+            <tr><td>Total songs</td><td class="num">{{ raw.total_songs }}</td></tr>
+            <tr><td>Total raw hours</td><td class="num">{{ "%.2f" | format(raw.total_raw_hours) }}</td></tr>
+            <tr><td>Min tracks/song</td><td class="num">{{ raw.track_min }}</td></tr>
+            <tr><td>Max tracks/song</td><td class="num">{{ raw.track_max }}</td></tr>
+            <tr><td>Mean tracks/song</td><td class="num">{{ "%.1f" | format(raw.track_mean) }}</td></tr>
+            <tr><td>Median tracks/song</td><td class="num">{{ "%.0f" | format(raw.track_median) }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% else %}
+    <p class="na-note">Raw directory not provided — pass <code>--raw-dir</code> to enable this section.</p>
+    {% endif %}
+  </div>
+
+  <!-- Filtering statistics -->
+  <div class="panel">
+    <h2>Quality Filtering (SingMOS-Pro)</h2>
+    {% if filter %}
+    <div class="two-col">
+      <div>
+        <h3>Score distribution</h3>
+        <div class="chart-wrap">
+          <canvas id="score-hist"></canvas>
+        </div>
+        <table>
+          <thead><tr><th>Score range</th><th class="num">Songs</th></tr></thead>
+          <tbody>
+            {% for row in filter.score_histogram.rows %}
+            <tr><td>{{ row[0] }}</td><td class="num">{{ row[1] }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div>
+        <h3>Filtering summary</h3>
+        <table>
+          <thead><tr><th>Metric</th><th class="num">Value</th></tr></thead>
+          <tbody>
+            <tr><td>Total raw songs</td><td class="num">{{ filter.total_raw_songs }}</td></tr>
+            <tr><td>Songs kept</td><td class="num">{{ filter.kept_songs }}</td></tr>
+            <tr><td>Songs dropped</td><td class="num">{{ filter.dropped_songs }}</td></tr>
+            <tr><td>Keep rate</td><td class="num">{{ "%.0f" | format(filter.keep_rate * 100) }}%</td></tr>
+            {% if filter.score_min is not none %}<tr><td>Score min</td><td class="num">{{ "%.4f" | format(filter.score_min) }}</td></tr>{% endif %}
+            {% if filter.score_max is not none %}<tr><td>Score max</td><td class="num">{{ "%.4f" | format(filter.score_max) }}</td></tr>{% endif %}
+            {% if filter.score_mean is not none %}<tr><td>Score mean</td><td class="num">{{ "%.4f" | format(filter.score_mean) }}</td></tr>{% endif %}
+            {% if filter.inferred_threshold is not none %}<tr><td>Min score (kept songs)</td><td class="num">{{ "%.4f" | format(filter.inferred_threshold) }}</td></tr>{% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% else %}
+    <p class="na-note">Scores file not provided — pass <code>--scores</code> (and <code>--raw-dir</code>) to enable this section.</p>
+    {% endif %}
+  </div>
+
+</div><!-- /wrap -->
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js" onerror="window._chartjsFailed=true"></script>
+<script>
+(function () {
+  if (window._chartjsFailed) return; // tables still readable
+
+  const ACCENT = '#0f766e';
+  const SOFT   = 'rgba(15,118,110,0.15)';
+  const WARN   = 'rgba(245,158,11,0.35)';
+
+  function bar(id, labels, data, color) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    new Chart(el, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{ data: data, backgroundColor: color || SOFT, borderColor: color ? color.replace('0.35','1') : ACCENT, borderWidth: 1 }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { font: { size: 10 }, maxRotation: 45 } },
+          y: { beginAtZero: true, ticks: { font: { size: 11 } } }
+        }
+      }
+    });
+  }
+
+  // Duration histogram rendered as inline SVG — no CDN needed
+
+  // Track count histogram
+  {% if raw %}
+  bar('track-hist',
+    {{ raw.track_histogram.labels | tojson }},
+    {{ raw.track_histogram.counts | tojson }});
+  {% endif %}
+
+  // Score histogram
+  {% if filter %}
+  bar('score-hist',
+    {{ filter.score_histogram.labels | tojson }},
+    {{ filter.score_histogram.counts | tojson }},
+    WARN);
+  {% endif %}
+})();
+</script>
+</body>
+</html>
