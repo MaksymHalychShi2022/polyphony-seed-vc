@@ -3,6 +3,44 @@
 [![GitHub Pages](https://img.shields.io/badge/GitHub%20Pages-Eval%20Report-blue?logo=github)](https://maksymhalychshi2022.github.io/polyphony-seed-vc-evaluation/)
 [![MLflow](https://img.shields.io/badge/MLflow-Experiments-blue?logo=mlflow)](https://dagshub.com/maksym.halych.shi.2022/polyphony-seed-vc.mlflow/#/experiments/5/runs/412ddbda2ee94e2d9d65cb539307cbea/model-metrics)
 
+## Dataset Preprocessing Pipeline
+
+```mermaid
+flowchart LR
+    A[("Raw audio\nDATA_RAW/&lt;song_id&gt;/&lt;stem&gt;.mp3")] --> B["Song quality scoring\n(SingMOS-Pro)"]
+    B --> C{Quality filter}
+    C -->|below threshold or rank| X1[Discarded]
+    C -->|selected songs| D["VAD-based chunking\n(TEN VAD)"]
+    D --> E["Per-chunk filtering\n(silence · activity · polyphony)"]
+    E --> F["Audio normalization\n(LUFS −14 + peak 0.99)"]
+    F --> J1["Mel spectrogram"]
+    F --> J2["Semantic tokens\n(Whisper)"]
+    F --> J3["F0 / pitch\n(RMVPE)"]
+    F --> J4["Speaker embedding\n(CAMPPlus)"]
+```
+
+### Stages
+
+1. **Song quality scoring** (`process_raw_dataset.py`) — All songs in `DATA_RAW` are loaded in parallel and scored with SingMOS-Pro averaged over 5-second chunks. Songs are ranked by score and the top-N (configurable via `params.yaml: process_raw.max_songs`) above a minimum quality threshold are selected; the rest are discarded. The selection log is saved to `preprocess_manifest.json`.
+
+2. **VAD-based chunking** (`process_raw_dataset.py`) — The mixed stem signal for each selected song is passed through TEN VAD to find active vocal regions. Short gaps between regions are merged and each region is padded slightly; long regions are split into preferred-length chunks (default 8 s, min 1 s, max 30 s).
+
+3. **Per-chunk filtering** (`process_raw_dataset.py`) — Each candidate chunk is validated against two criteria before writing:
+   - *Mixture silence ratio*: chunk is dropped if more than 5% of frames fall below −30 dB RMS.
+   - *Per-stem checks*: each stem must have ≥ 20% active VAD frames (source activity) and the residual energy (mixture minus stem) must be ≥ 15% of the mixture RMS (polyphony contrast). Stems failing either check are dropped; the chunk is dropped if no stems pass.
+
+4. **Audio normalization** (`process_raw_dataset.py`) — Each accepted stem chunk is LUFS-normalized independently to −14 LUFS, then the stems are re-summed to rebuild the mixture, and the whole batch (stems + mixture) is peak-normalized to 0.99.
+
+5. **Feature extraction** (four parallel DVC stages, one per feature type) — Each audio file referenced in the CSVs is processed through:
+   - **Mel spectrogram** — log-mel via `MelSpectrogramExtractor`; target for the CFM model.
+   - **Semantic tokens** — Whisper encoder hidden states via `WhisperFeatureExtractor`; content representation.
+   - **F0 / pitch** — fundamental frequency contour via RMVPE (`F0FeatureExtractor`).
+   - **Speaker embedding** — d-vector via CAMPPlus (`CampplusEmbeddingExtractor`); timbre identity.
+
+   Results are cached as `.npy` files under `DATA_FEATURES/<type>/<audio_hash>.npy`. Unchanged files are skipped on re-runs.
+
+---
+
 ## Training on vast.ai
 
 Full steps to go from a fresh GPU instance to an active training run.
