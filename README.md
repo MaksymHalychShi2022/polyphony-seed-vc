@@ -41,6 +41,51 @@ flowchart LR
 
 ---
 
+## Model Architecture
+
+```mermaid
+flowchart LR
+    src["Source audio"]:::io
+    tgt["Target audio\n(reference)"]:::io
+    noise(["Gaussian noise"])
+
+    subgraph extractors["Feature Extraction"]
+        W["Whisper encoder\n(semantic tokens)"]
+        RMVPE["RMVPE\n(F0 extractor)"]
+        CAM["CAMPPlus\n(style encoder)"]
+        MEL["Mel spectrogram"]
+    end
+
+    subgraph model["Model"]
+        LR_src["Length Regulator"]
+        LR_tgt["Length Regulator"]
+        CFM["CFM\n(DiT estimator)"]
+    end
+
+    src --> W
+    src --> RMVPE
+    tgt --> W
+    tgt --> RMVPE
+    tgt --> CAM
+    tgt --> MEL
+
+    W -->|source semantics| LR_src
+    RMVPE -->|source F0| LR_src
+    W -->|target semantics| LR_tgt
+    RMVPE -->|target F0| LR_tgt
+
+    LR_src -->|cond| CFM
+    LR_tgt -->|prompt| CFM
+    CAM -->|style| CFM
+    MEL -->|reference mel| CFM
+    noise --> CFM
+
+    CFM -->|generated mel| VOC["BigVGAN\n(vocoder)"]
+    VOC --> out["Converted audio"]:::io
+
+    classDef io fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
+```
+
 ## Training on vast.ai
 
 Full steps to go from a fresh GPU instance to an active training run.
