@@ -317,9 +317,9 @@ class VoiceConversionWrapper(nn.Module):
             ignore_modules=[],
             is_distributed=False,
         )
-        nets.cfm.estimator.setup_caches(max_batch_size=1, max_seq_length=8192)
         nets.cfm.to(device)
         nets.length_regulator.to(device)
+        nets.cfm.estimator.setup_caches(max_batch_size=1, max_seq_length=8192)
 
         # 4.2 — Whisper
         from transformers import AutoFeatureExtractor, WhisperModel
